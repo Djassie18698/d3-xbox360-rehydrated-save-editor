@@ -11,6 +11,7 @@ EQUIP_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
 QUALITIES = [(1, 'Normal'), (3, 'Magic'), (6, 'Rare'), (9, 'Legendary')]
 AFFIX_KINDS = {0: 'requirement', 1: 'rare only', 2: 'legendary', 3: ''}
 MAX_AFFIXES = 32   # the affix message the server sends holds 32; more and the game disconnects
+MAX_SOCKETS = 3    # the client's socket attributes hold 0-3; with more gems than that it disconnects
 STACKABLE = ('HealthPotion', 'Gem', 'CraftingReagent', 'Dye')
 
 
@@ -327,8 +328,14 @@ class App:
         ttk.Button(nb, text='Choose name...', command=self.choose_name).pack(side='left')
         ttk.Button(nb, text='Random name', command=self.random_name).pack(side='left', padx=6)
 
-        self.gem_label = ttk.Label(right, text='Gems')
-        self.gem_label.pack(anchor='w', pady=(6, 0))
+        sf = ttk.Frame(right)
+        sf.pack(fill='x', pady=(6, 0))
+        self.gem_label = ttk.Label(sf, text='Gems')
+        self.gem_label.pack(side='left')
+        ttk.Button(sf, text='Set', command=self.set_sockets, width=5).pack(side='right')
+        self.sockets_var = tk.IntVar()
+        ttk.Spinbox(sf, from_=0, to=MAX_SOCKETS, textvariable=self.sockets_var, width=4).pack(side='right', padx=4)
+        ttk.Label(sf, text='Sockets').pack(side='right')
         self.gem_list = tk.Listbox(right, height=3)
         self.gem_list.pack(fill='x')
         gb = ttk.Frame(right)
@@ -336,8 +343,8 @@ class App:
         ttk.Button(gb, text='Add gem...', command=self.add_gem).pack(side='left')
         ttk.Button(gb, text='Remove gem', command=self.remove_gem).pack(side='left', padx=6)
 
-        ttk.Label(right, text='Magic items hold 1-2 affixes, rares 4-6. Sockets come from "Sockets" affixes (one '
-                  'each). Press Apply changes to keep your edits.', wraplength=320, foreground='#777').pack(anchor='w', pady=4)
+        ttk.Label(right, text='Magic items hold 1-2 affixes, rares 4-6. Any item can have up to 3 sockets. '
+                  'Press Apply changes to keep your edits.', wraplength=320, foreground='#777').pack(anchor='w', pady=4)
         ttk.Button(right, text='Apply changes', command=self.apply_item).pack(anchor='e', pady=6)
         self.status = ttk.Label(root, text='', padding=6)
         self.status.pack(fill='x')
@@ -518,7 +525,9 @@ class App:
         self.gem_list.delete(0, 'end')
         for g in self.pending_gems:
             self.gem_list.insert('end', self.data.item_name(g))
-        self.gem_label.config(text='Gems (%d sockets)' % self.data.sockets(self.pending_affixes))
+        sockets = self.data.sockets(self.pending_affixes)
+        self.sockets_var.set(sockets)
+        self.gem_label.config(text='Gems (%d of %d sockets)' % (len(self.pending_gems), sockets))
 
     # --- edits
     def mark(self):
@@ -534,6 +543,10 @@ class App:
             item.quality = q
         if self.pending_affixes and item.quality < 3:
             item.quality = 6 if len(self.pending_affixes) > 2 else 3   # affixes only show on magic and better
+        if self.data.sockets(self.pending_affixes) > MAX_SOCKETS:
+            messagebox.showinfo('Sockets', 'The game shows at most %d sockets per item and disconnects with more '
+                                'gems; use the Sockets setting instead of more Sockets affixes.' % MAX_SOCKETS)
+            return
         item.affixes = self.pending_affixes[:MAX_AFFIXES]
         if 6 <= item.quality <= 8 and not self.pending_name:
             self.pending_name = self.data.random_rare_name(info, item.affixes)
@@ -608,9 +621,9 @@ class App:
         item = self.selected()
         if not item:
             return
-        sockets = self.data.sockets(self.pending_affixes)
+        sockets = min(self.data.sockets(self.pending_affixes), MAX_SOCKETS)
         if len(self.pending_gems) >= sockets:
-            messagebox.showinfo('Gems', 'No free socket. Add a "Sockets" affix (one socket each) and try again.')
+            messagebox.showinfo('Gems', 'No free socket. Set Sockets (up to %d) and try again.' % MAX_SOCKETS)
             return
         gems = sorted((i for i in self.data.items if i['type'] == 'Gem' and i.get('console', True)),
                       key=lambda i: (i['name'].split('_')[0], i['level']))
@@ -619,6 +632,29 @@ class App:
         if d.result:
             self.pending_gems.append(d.result)
             self.refresh_pending()
+
+    def socket_affix(self, info):
+        """A Sockets affix for this item: one the game rolls on its type, else the plain one."""
+        def is_socket(a):
+            return any(st[0] == 'Sockets' for st in a.get('stats', []))
+        fitting = [a for a in self.data.affixes_for(info) if is_socket(a)]
+        pool = fitting or [a for a in self.data.affixes if is_socket(a)]
+        return min(pool, key=lambda a: a['level'])['gbid']
+
+    def set_sockets(self):
+        """Any item can get up to 3 sockets, also ones the game gives fewer (a dagger normally has at most 1)."""
+        item = self.selected()
+        if not item:
+            return
+        try:
+            n = max(0, min(int(self.sockets_var.get()), MAX_SOCKETS))
+        except (ValueError, tk.TclError):
+            return
+        socket_gbids = {a['gbid'] for a in self.data.affixes if any(st[0] == 'Sockets' for st in a.get('stats', []))}
+        self.pending_affixes = [a for a in self.pending_affixes if a not in socket_gbids]
+        self.pending_affixes += [self.socket_affix(self.data.by_gbid.get(item.gbid, {}))] * n
+        self.pending_gems = self.pending_gems[:n]
+        self.refresh_pending()
 
     def remove_gem(self):
         sel = self.gem_list.curselection()

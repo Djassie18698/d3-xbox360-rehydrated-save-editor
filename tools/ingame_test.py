@@ -8,6 +8,7 @@ cases: basic   normal items in the backpack and equipment slots, a legendary in 
        affix   a magic ring, a rare helm and a magic dagger with chosen affixes
        crazy   level 60 hero with a dagger of 29 stacked top-tier affixes in the main hand
        legend  level 60 hero with The Barber (legendary dagger) in the main hand, and two PC-only items
+       sockets level 60 hero with a dagger of 3 sockets (the most the game allows), each holding a Radiant Star Ruby, in the main hand
        extras  Paragon 50, a socketed dagger with a Radiant Star Ruby, a named rare helm, the Templar in full gear
                (follower slots 64-69) and a ring in the hardcore stash
 The hero is the last played one unless a name is given."""
@@ -76,6 +77,10 @@ def make(case, real, root, name=None):
         add(hero, 'Unique_Dagger_003', 4)
         add(hero, 'Unique_Sword_1H_008', it.BACKPACK)   # not in the console data
         add(hero, 'Offhand_001', it.BACKPACK)          # not in the console data
+    elif case == 'sockets':
+        hero.level = 60
+        dagger = add(hero, 'Dagger_001', 4, 3, ['Sockets I'] * 3)
+        hero.container.set_gems(dagger, [ITEM['Ruby_14']['gbid']] * 3)
     elif case == 'extras':
         hero.level = 60
         save.account.set_paragon(50)

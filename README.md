@@ -35,7 +35,9 @@ OneDrive). If you start Rehydrated with another `--user_data_root`, use **Open f
   one per family. Tick **Show all affixes (modded)** to add any affix to any item, as many copies as you like:
   copies stack, so a dagger with four times the top damage affix really does four times that damage.
   An item can hold at most **32 affixes**; with more the game disconnects you when the item loads.
-- **Gems**: each "Sockets" affix adds a socket; fill sockets with any gem, up to the console's Radiant Star gems.
+- **Sockets and gems**: give any item up to **3 sockets**, also items that normally get fewer (a dagger with three
+  Radiant Star Rubies works in game), and fill them with any gem, up to the console's Radiant Star gems. More than 3
+  is not possible: the game client only handles 0-3 sockets and disconnects with more gems.
 - **Rare names**: rares get a name like the game gives them ("Worthy Shell"), built from the item type and its
   affixes; pick another from the list of names that item can have.
 - **Followers**: unlock the Templar, Scoundrel and Enchantress for a hero and equip their main hand, off-hand,
