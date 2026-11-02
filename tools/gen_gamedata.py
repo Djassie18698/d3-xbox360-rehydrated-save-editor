@@ -2,7 +2,7 @@
 release; affixes do not (the console has its own list, see console_affixes.py).
 
 usage: gen_gamedata.py <PC client folder> <output folder>
-writes items.json"""
+writes items.json; run console_affixes.py afterwards for the console's legendary affix rolls"""
 import json, re, struct, sys
 from pathlib import Path
 from mpq import MPQ
@@ -13,7 +13,7 @@ ITEM_TABLES = ['Items_Weapons', 'Items_Armor', 'Items_Other', 'Items_Legendary',
 CONSOLE_ITEMS = [
     {'name': 'HealthPotionConsole', 'display': 'Health Potion (console)', 'type': 'HealthPotion',
      'typeDisplay': 'Potion', 'level': 1, 'requiredLevel': 0, 'maxDurability': 0, 'actor': -1, 'typeGroups': [],
-     'table': 'Console', 'legendary': False},
+     'table': 'Console', 'legendary': False, 'affixRolls': []},
 ]
 ITEM_RECORD = 1488
 ITEMTYPE_RECORD = 320
@@ -87,6 +87,7 @@ def main(client, out):
                 'type': itype['name'], 'typeDisplay': itype['display'], 'level': level, 'requiredLevel': req_level,
                 'maxDurability': max_dur, 'actor': sno_actor, 'typeGroups': ancestry(type_gbid),
                 'legendary': table.startswith('Items_Legendary') or name.startswith(('Unique_', 'Set_')),
+                'affixRolls': [],   # filled in from the console's own tables by console_affixes.py
             })
 
     for extra in CONSOLE_ITEMS:

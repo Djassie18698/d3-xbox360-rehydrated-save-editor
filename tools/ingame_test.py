@@ -7,6 +7,7 @@ usage: ingame_test.py <case> <real user data root> <test root> [hero name]
 cases: basic   normal items in the backpack and equipment slots, a legendary in the stash, 123456 gold
        affix   a magic ring, a rare helm and a magic dagger with chosen affixes
        crazy   level 60 hero with a dagger of 29 stacked top-tier affixes in the main hand
+       legend  level 60 hero with The Barber (legendary dagger) in the main hand, and two PC-only items
 The hero is the last played one unless a name is given."""
 import collections, os, shutil, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
@@ -65,6 +66,11 @@ def make(case, real, root, name=None):
         hero.level = 60
         add(hero, 'Dagger_001', 4, 6, ['Damage VIII'] * 4 + 4 * ['PrimaryAttribute_Int 17 Legendary', 'AllStats 17 Legendary',
             top('CriticalD '), top('CriticalChance '), 'Haste 11', 'DamageBonusArcane 4 Legendary'] + ['Indestructible 10'])
+    elif case == 'legend':
+        hero.level = 60
+        add(hero, 'Unique_Dagger_003', 4)
+        add(hero, 'Unique_Sword_1H_008', it.BACKPACK)   # not in the console data
+        add(hero, 'Offhand_001', it.BACKPACK)          # not in the console data
     else:
         sys.exit(__doc__)
     save.save()

@@ -38,7 +38,7 @@ class AddItemDialog(tk.Toplevel):
         ttk.Checkbutton(row, text='Legendaries only', variable=self.legendary_only, command=self.refresh).pack(side='left', padx=6)
         ttk.Label(row, text='Type').pack(side='left', padx=(12, 0))
         self.type_filter = tk.StringVar(value='(all)')
-        types = sorted({i['typeDisplay'] for i in app.data.items})
+        types = sorted({i['typeDisplay'] for i in app.data.items if i.get('console', True)})
         ttk.Combobox(row, textvariable=self.type_filter, values=['(all)'] + types, width=22, state='readonly').pack(side='left', padx=6)
         self.type_filter.trace_add('write', lambda *_: self.refresh())
         self.query.trace_add('write', lambda *_: self.refresh())
@@ -76,6 +76,8 @@ class AddItemDialog(tk.Toplevel):
         self.tree.delete(*self.tree.get_children())
         self.shown = {}
         for info in sorted(self.app.data.items, key=lambda i: (i['display'].lower(), i['level'])):
+            if not info.get('console', True):
+                continue   # PC-only item: the console game drops it
             if self.legendary_only.get() and not info['legendary']:
                 continue
             if t != '(all)' and info['typeDisplay'] != t:
@@ -417,7 +419,10 @@ class App:
         if not info:
             return
         q = dict((n, q) for q, n in QUALITIES).get(self.q_var.get(), item.quality)
-        self.pending_affixes = self.data.random_affixes(info, 6 if q == 6 else 2)
+        if q == 9:
+            self.pending_affixes = self.data.legendary_affixes(info)   # what this legendary rolls when it drops
+        else:
+            self.pending_affixes = self.data.random_affixes(info, 6 if q == 6 else 2)
         self.affix_list.delete(0, 'end')
         for a in self.pending_affixes:
             self.affix_list.insert('end', self.data.affix_name(a))

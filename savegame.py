@@ -1,5 +1,5 @@
 """A Rehydrated save folder (d3save): account (gold, shared stash) and heroes (backpack, equipment)."""
-import glob, json, os, random, shutil, subprocess, time
+import glob, json, os, random, shutil, struct, subprocess, time
 import d3save
 import items as it
 
@@ -69,6 +69,9 @@ def game_running():
     return 'rehydrated.exe' in out.lower()
 
 
+LEGENDARY_GROUP = 0xA14D315D
+
+
 class GameData:
     def __init__(self):
         with open(os.path.join(DATA, 'items.json'), encoding='utf-8') as f:
@@ -106,6 +109,22 @@ class GameData:
             best.append(max(fitting, key=lambda a: a['level']) if fitting else min(tiers, key=lambda a: a['level']))
         picks = random.sample(best, min(count, len(best)))
         return [a['gbid'] for a in picks]
+
+    def legendary_affixes(self, info):
+        """The affixes a legendary rolls when it drops: one per family listed on the item, from the affixes of that
+        family a legendary can have up to the listed affix level (the best tier, so created items are good rolls)."""
+        # Legendary-only affixes name the group of all legendaries and rule item types out by exclusion.
+        groups = set(info.get('typeGroups', [])) | {LEGENDARY_GROUP}
+        out = []
+        for family, max_level in info.get('affixRolls', []):
+            tiers = [a for a in self.affixes if family in (a['family'], a.get('family2')) and a['qualityMask'] & (1 << 9)]
+            fits_type = [a for a in tiers if groups & set(a['groups']) and not groups & set(a['excludedGroups'])]
+            tiers = fits_type or tiers
+            fitting = [a for a in tiers if a['level'] <= max_level] or sorted(tiers, key=lambda a: a['level'])[:1]
+            if fitting:
+                top = max(a['level'] for a in fitting)
+                out.append(random.choice([a for a in fitting if a['level'] == top])['gbid'])
+        return out
 
     def height(self, gbid):
         info = self.by_gbid.get(gbid)
@@ -148,10 +167,24 @@ class Container:
         return None
 
 
-# Saved attribute key of the hero level (SavedAttributes entry {1: key, 2: zigzag value}); found by comparing heroes
-# of different levels and confirmed in game.
+# Saved attribute keys (SavedAttributes entry {1: key, 2: zigzag value}), found by comparing heroes of different
+# levels and classes and confirmed in game. The base stats are floats (zigzag of the IEEE bits) the game raises at
+# every level-up, so a level change has to set them too.
 LEVEL_KEY = 0x1F5F
+STAT_KEYS = {'Strength': 0x1EFB, 'Dexterity': 0x1EF7, 'Intelligence': 0x1EF3, 'Vitality': 0x1EDF}
 MAX_LEVEL = 60
+# Level 1 base stats and the gain per level: the main stat of the class +3, Vitality +2, the others +1.
+CLASS_MAIN_STAT = {'Barbarian': 'Strength', 'Demon Hunter': 'Dexterity', 'Monk': 'Dexterity',
+                   'Witch Doctor': 'Intelligence', 'Wizard': 'Intelligence'}
+
+
+def base_stats(class_name, level):
+    main = CLASS_MAIN_STAT.get(class_name)
+    stats = {}
+    for stat in STAT_KEYS:
+        start, gain = (10, 3) if stat == main else (9, 2) if stat == 'Vitality' else (8, 1)
+        stats[stat] = float(start + gain * (level - 1))
+    return stats
 
 
 class Hero:
@@ -169,15 +202,25 @@ class Hero:
 
     @level.setter
     def level(self, value):
-        """The hero list reads the digest; the game itself reads the saved Level attribute."""
+        """The hero list reads the digest; the game reads the saved Level and base stat attributes."""
         self.digest.set(5, d3save.zigzag(value))
-        attrs = self.msg.sub(3)
-        entry = next((e for e in attrs.subs(2) if e.get(1) == LEVEL_KEY), None)
-        if entry is None:
-            entry = d3save.Message([d3save.Field(1, d3save.VARINT, LEVEL_KEY), d3save.Field(2, d3save.VARINT, 0)])
-            attrs.add_message(2, entry)
-        entry.set(2, d3save.zigzag(value))
+        self.set_attribute(LEVEL_KEY, d3save.zigzag(value))
+        if self.class_name in CLASS_MAIN_STAT:
+            for stat, amount in base_stats(self.class_name, value).items():
+                bits, = struct.unpack('<i', struct.pack('<f', amount))
+                self.set_attribute(STAT_KEYS[stat], d3save.zigzag(bits))
         self.dirty = True
+
+    def attribute(self, key):
+        return next((e.get(2) for e in self.msg.sub(3).subs(2) if e.get(1) == key), None)
+
+    def set_attribute(self, key, raw):
+        attrs = self.msg.sub(3)
+        entry = next((e for e in attrs.subs(2) if e.get(1) == key), None)
+        if entry is None:
+            entry = d3save.Message([d3save.Field(1, d3save.VARINT, key), d3save.Field(2, d3save.VARINT, 0)])
+            attrs.add_message(2, entry)
+        entry.set(2, raw)
 
     id_low = property(lambda s: s.digest.sub(2).get(2))
 
@@ -273,6 +316,8 @@ def make_item(container, data, info, slot, square, quality=None, affixes=(), sta
         stack = 1 if stackable else 0
     if quality is None:
         quality = 9 if info['legendary'] else None
+    if quality == 9 and not affixes:
+        affixes = data.legendary_affixes(info)
     if quality in (3, 4, 5, 6, 7, 8) and not affixes:
         # Magic items roll 1-2 affixes and rares 4-6: without any the game shows a blue or yellow item with no stats.
         affixes = data.random_affixes(info, {3: 1, 4: 2, 5: 2, 6: 4, 7: 5, 8: 6}[quality])

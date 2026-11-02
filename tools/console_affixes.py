@@ -1,18 +1,24 @@
-"""Builds data/affixes.json from the console game's own affix table, read from a running Rehydrated.
+"""Builds data/affixes.json from the console game's own affix table, and the legendary affix rolls in
+data/items.json from its item tables, read from a running Rehydrated.
 
 The console (Xbox 360) affix list differs from the PC one: every record is named "1xx_<name>" and its gbid is the
 hash of that full name, and about a third of the affixes only exist on console. The table is not in the PC client,
 so it is read from guest memory once the game shows its main menu. Windows only.
 
 Record layout (512 bytes, big endian): 0 name pointer, 8 gbid, 12 kind, 40 affix level, 56 required level,
-88 family (one affix per family on an item), 128 up to 16 item type groups it may roll on, 224 up to 16 groups it
+88 family (one affix per family on an item), 92 a second family legendary rolls may name, 128 up to 16 item type groups it may roll on, 224 up to 16 groups it
 may not roll on, 320 mask of item qualities it may roll on.
 
-usage: console_affixes.py [output folder]     (default: ../data)"""
+Item record (1320 bytes, big endian): 0 name pointer, 8 gbid, 1224 up to 6 affix families a legendary rolls one
+affix from when it drops, 1248 the highest affix level for each. The console reworked legendaries, so these differ
+from the PC client's.
+
+usage: console_affixes.py [data folder]     (default: ../data; items.json must exist there)"""
 import ctypes, ctypes.wintypes as w, json, os, re, struct, subprocess, sys
 
 GUEST_BASE = 0x100000000     # rexglue maps guest memory here (see "Guest memory arena mapped" in its log)
 RECORD = 0x200
+ITEM_RECORD = 0x528
 
 
 def gbid(name):
@@ -98,9 +104,51 @@ def read_table(g, at):
         v = struct.unpack('>128I', r)
         groups = lambda off: [x for x in v[off // 4:off // 4 + 16] if x != 0xFFFFFFFF]
         out.append({'gbid': v[2], 'name': name[4:], 'kind': v[3], 'level': v[10], 'requiredLevel': v[14],
-                    'family': v[22], 'groups': groups(128), 'excludedGroups': groups(224), 'qualityMask': v[80]})
+                    'family': v[22], 'family2': v[23], 'groups': groups(128), 'excludedGroups': groups(224), 'qualityMask': v[80]})
         at += RECORD
     return out
+
+
+def region_of(g, addr):
+    return next((b, n) for b, n in g.regions() if b <= addr < b + n)
+
+
+def read_item_rolls(g, base, size, items):
+    """Finds the item tables in the game data region. Returns {gbid: [[family, max affix level], ...]} and the
+    gbids that exist in the console data at all (PC items missing there are dropped by the game)."""
+    data = g.read(base, size)
+    want = {gbid(i['name']): i['name'] for i in items}
+    found = {}
+    present = {g for g in want if data.find(struct.pack('>I', g)) >= 0}
+
+    def record(o):
+        if not 0 <= o <= len(data) - ITEM_RECORD:
+            return None
+        ptr, zero, gb = struct.unpack_from('>3I', data, o)
+        if zero or gb not in want or not base <= ptr < base + len(data):
+            return None
+        name = data[ptr - base:ptr - base + 128].split(b'\0')[0].decode('latin1')
+        return gb if gbid(name) == gb else None
+
+    for gb, name in want.items():
+        if gb in found:
+            continue
+        at = -1
+        for m in re.finditer(rb'\0' + re.escape(name.encode()) + rb'\0', data):
+            i = data.find(struct.pack('>III', base + m.start() + 1, 0, gb))
+            if i >= 0 and i % 4 == 0:
+                at = i
+                break
+        if at < 0:
+            continue
+        while record(at - ITEM_RECORD):
+            at -= ITEM_RECORD
+        while (g_ := record(at)) is not None:
+            v = struct.unpack_from('>%dI' % (ITEM_RECORD // 4), data, at)
+            families, levels = v[1224 // 4:1224 // 4 + 6], v[1248 // 4:1248 // 4 + 6]
+            found[g_] = [[f, l] for f, l in zip(families, levels) if f != 0xFFFFFFFF]
+            at += ITEM_RECORD
+    return found, present
 
 
 def main(out):
@@ -110,11 +158,23 @@ def main(out):
     if not m:
         sys.exit('Start Rehydrated and wait for the main menu first.')
     g = Guest(int(m.group(1)))
-    affixes = read_table(g, find_table(g))
-    os.makedirs(out, exist_ok=True)
+    table = find_table(g)
+    affixes = read_table(g, table)
     with open(os.path.join(out, 'affixes.json'), 'w', encoding='utf-8') as f:
         json.dump(affixes, f, indent=1)
     print('%d console affixes' % len(affixes))
+
+    path = os.path.join(out, 'items.json')
+    with open(path, encoding='utf-8') as f:
+        items = json.load(f)
+    rolls, present = read_item_rolls(g, *region_of(g, table), items)
+    for i in items:
+        i['affixRolls'] = rolls.get(gbid(i['name']), [])
+        i['console'] = gbid(i['name']) in present or i['table'] == 'Console'
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(items, f, indent=1)
+    print('%d of %d items exist on console, %d roll legendary affixes' % (
+        sum(i['console'] for i in items), len(items), sum(1 for r in rolls.values() if r)))
 
 
 if __name__ == '__main__':
