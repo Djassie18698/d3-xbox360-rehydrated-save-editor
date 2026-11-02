@@ -8,6 +8,8 @@ cases: basic   normal items in the backpack and equipment slots, a legendary in 
        affix   a magic ring, a rare helm and a magic dagger with chosen affixes
        crazy   level 60 hero with a dagger of 29 stacked top-tier affixes in the main hand
        legend  level 60 hero with The Barber (legendary dagger) in the main hand, and two PC-only items
+       extras  Paragon 50, a socketed dagger with a Radiant Star Ruby, a named rare helm, the Templar in full gear
+               (follower slots 64-69) and a ring in the hardcore stash
 The hero is the last played one unless a name is given."""
 import collections, os, shutil, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
@@ -33,17 +35,20 @@ def pick_hero(save, name=None):
     return next((h for h in save.heroes if h.id_low == last.get(2)), save.heroes[0])
 
 
-def add(hero, name, slot, quality=None, affixes=()):
+def add(hero, name, slot, quality=None, affixes=(), hireling=0):
     c = hero.container
     info = ITEM[name]
     if slot == it.BACKPACK:
         square = c.free_square(slot, sg.BACKPACK_W, sg.BACKPACK_H, data.height(info['gbid']), data)
     else:
         square = 0
-        for old in [i for i in c.items if i.slot == slot]:
+        for old in [i for i in c.items if i.slot == slot and i.hireling == hireling]:
             old.slot, old.square = it.BACKPACK, c.free_square(it.BACKPACK, sg.BACKPACK_W, sg.BACKPACK_H, data.height(old.gbid), data)
-    c.add(sg.make_item(c, data, info, slot, square, quality, [AFFIX[a] for a in affixes]))
+    item = sg.make_item(c, data, info, slot, square, quality, [AFFIX[a] for a in affixes])
+    item.hireling = hireling
+    c.add(item)
     hero.dirty = True
+    return item
 
 
 def make(case, real, root, name=None):
@@ -71,6 +76,20 @@ def make(case, real, root, name=None):
         add(hero, 'Unique_Dagger_003', 4)
         add(hero, 'Unique_Sword_1H_008', it.BACKPACK)   # not in the console data
         add(hero, 'Offhand_001', it.BACKPACK)          # not in the console data
+    elif case == 'extras':
+        hero.level = 60
+        save.account.set_paragon(50)
+        dagger = add(hero, 'Dagger_001', 4, 3, ['Sockets I'])
+        hero.container.set_gems(dagger, [ITEM['Ruby_14']['gbid']])
+        helm = add(hero, 'Helm_002', it.BACKPACK, 6, ['Str 6', 'Vit 6', 'ArcaneResist I', 'Experience I'])
+        helm.rare_name = data.rare_name_choices(ITEM['Helm_002'], helm.affixes)[0][1]
+        hero.unlock_followers()
+        for slot, name in ((65, 'Sword_1H_001'), (64, 'Shield_001'), (66, 'Templar_Special_001'), (67, 'Amulet01'),
+                           (68, 'Ring_01'), (69, 'Ring_02')):
+            add(hero, name, slot, hireling=1)
+        hc = save.account.stash(1)
+        hc.add(sg.make_item(hc, data, ITEM['Ring_02'], it.STASH, 0))
+        save.account.dirty = True
     else:
         sys.exit(__doc__)
     save.save()
@@ -83,9 +102,18 @@ def check(root, name=None):
     print('%s, level %d' % (hero.name, hero.level))
     for i in hero.container.items:
         affixes = collections.Counter(data.affix_name(a) for a in i.affixes)
-        print('  %-14s %-26s %-10s %s' % (it.SLOT_NAMES.get(i.slot, i.slot), data.item_name(i.gbid), it.QUALITY_NAMES.get(i.quality, i.quality),
-                                          ', '.join('%s x%d' % kv if kv[1] > 1 else kv[0] for kv in affixes.items())))
-    print('  stash: %s; gold %d' % ([data.item_name(i.gbid) for i in save.account.container.items if i.slot == it.STASH], save.account.gold))
+        who = it.HIRELING_NAMES.get(i.hireling, i.hireling) + ' ' if i.hireling else ''
+        extra = ''
+        if i.gems:
+            extra += ' gems: %s' % [data.item_name(g.gbid) for g in i.gems]
+        if i.rare_name:
+            extra += ' name: %s' % data.rare_name_text(data.by_gbid.get(i.gbid, {}), i.rare_name)
+        print('  %-24s %-26s %-10s %s%s' % (who + str(it.SLOT_NAMES.get(i.slot, i.slot)), data.item_name(i.gbid),
+                                            it.QUALITY_NAMES.get(i.quality, i.quality),
+                                            ', '.join('%s x%d' % kv if kv[1] > 1 else kv[0] for kv in affixes.items()), extra))
+    for p in save.account.partitions:
+        print('  %s stash: %s; gold %d; paragon %d' % (sg.PARTITION_NAMES[p], [data.item_name(i.gbid) for i in save.account.stash(p).items if i.slot == it.STASH],
+                                                      save.account.get_gold(p), save.account.get_paragon(p)))
 
 
 if __name__ == '__main__':

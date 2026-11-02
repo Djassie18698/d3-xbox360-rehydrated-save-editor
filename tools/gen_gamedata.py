@@ -2,7 +2,8 @@
 release; affixes do not (the console has its own list, see console_affixes.py).
 
 usage: gen_gamedata.py <PC client folder> <output folder>
-writes items.json; run console_affixes.py afterwards for the console's legendary affix rolls"""
+writes items.json and text.json (stat descriptions, rare name words, magic affix names); run console_affixes.py
+afterwards for the console's affixes and legendary affix rolls"""
 import json, re, struct, sys
 from pathlib import Path
 from mpq import MPQ
@@ -93,9 +94,21 @@ def main(client, out):
     for extra in CONSOLE_ITEMS:
         items.append(dict(extra, gbid=gbid(extra['name'])))
 
+    # Rare names: word lists by SNO id (the id sits after the 16-byte file header), in their stored order, which is
+    # the index an item's RareItemName refers to.
+    rare = {}
+    for n in text.read('(listfile)').decode('latin1').split():
+        if n.startswith('StringList\\RareNameStrings_'):
+            path = n.replace('\\', '/')
+            sno, = struct.unpack_from('<i', text.read(path), 0x10)
+            rare[sno] = list(string_list(text, path).values())
+    texts = {'attributes': string_list(text, 'StringList/AttributeDescriptions.stl'),
+             'affixNames': string_list(text, 'StringList/Affixes.stl'), 'rareNames': rare}
+
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     (out / 'items.json').write_text(json.dumps(items, indent=1), encoding='utf-8')
+    (out / 'text.json').write_text(json.dumps(texts, indent=0, ensure_ascii=False), encoding='utf-8')
     print('%d items (%d legendary), %d item types' % (len(items), sum(i['legendary'] for i in items), len(types)))
 
 

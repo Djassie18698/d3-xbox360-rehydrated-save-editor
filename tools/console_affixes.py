@@ -6,12 +6,17 @@ hash of that full name, and about a third of the affixes only exist on console. 
 so it is read from guest memory once the game shows its main menu. Windows only.
 
 Record layout (512 bytes, big endian): 0 name pointer, 8 gbid, 12 kind, 40 affix level, 56 required level,
-88 family (one affix per family on an item), 92 a second family legendary rolls may name, 128 up to 16 item type groups it may roll on, 224 up to 16 groups it
-may not roll on, 320 mask of item qualities it may roll on.
+80/84 the rare name lists (prefix, suffix) the affix lends words from, 88 family (one affix per family on an item),
+92 a second family legendary rolls may name, 128 up to 16 item type groups it may roll on, 224 up to 16 groups it
+may not roll on, 320 mask of item qualities it may roll on, 336 four stat slots of 24 bytes: attribute, parameter,
+0, formula pointer, formula offset, formula size.
 
-Item record (1320 bytes, big endian): 0 name pointer, 8 gbid, 1224 up to 6 affix families a legendary rolls one
-affix from when it drops, 1248 the highest affix level for each. The console reworked legendaries, so these differ
-from the PC client's.
+Item record (1320 bytes, big endian): 0 name pointer, 8 gbid, 100/104 the rare name lists (prefix, suffix) of the
+item type, 1224 up to 6 affix families a legendary rolls one affix from when it drops, 1248 the highest affix level
+for each. The console reworked legendaries, so these differ from the PC client's.
+
+Formulas are small stack programs of big endian words, the operation in the top byte: 6 <float> pushes a number, 1 makes a random range of the
+two numbers on top, 4 rounds it, 11-14 add/subtract/multiply/divide, 0 ends.
 
 usage: console_affixes.py [data folder]     (default: ../data; items.json must exist there)"""
 import ctypes, ctypes.wintypes as w, json, os, re, struct, subprocess, sys
@@ -19,6 +24,7 @@ import ctypes, ctypes.wintypes as w, json, os, re, struct, subprocess, sys
 GUEST_BASE = 0x100000000     # rexglue maps guest memory here (see "Guest memory arena mapped" in its log)
 RECORD = 0x200
 ITEM_RECORD = 0x528
+ATTRIB_DEFS = 0x82F9DA88     # the game's attribute definition table (40-byte entries; name pointer at 28)
 
 
 def gbid(name):
@@ -87,6 +93,52 @@ def find_table(g):
     raise RuntimeError('affix records not found')
 
 
+def attribute_names(g):
+    names = []
+    while True:
+        raw = g.read(ATTRIB_DEFS + len(names) * 40, 40)
+        index, = struct.unpack_from('>i', raw)
+        if index != len(names):
+            return names
+        name = g.read(struct.unpack_from('>I', raw, 28)[0], 64).split(b'\0')[0].decode('latin1')
+        if not name:
+            return names
+        names.append(name)
+
+
+def formula_range(words):
+    """(low, high) a formula can produce, or None for formulas this does not understand."""
+    stack, i = [], 0
+    while i < len(words):
+        op = words[i] >> 24
+        if op == 0:
+            break
+        if op == 6:
+            v, = struct.unpack('>f', struct.pack('>I', words[i + 1]))
+            stack.append((v, v))
+            i += 2
+            continue
+        if op == 1 and len(stack) >= 2:
+            (a, _), (b, _) = stack.pop(), stack.pop()
+            stack.append((min(a, b), max(a, b)))
+        elif op == 4 and stack:
+            pass
+        elif op in (11, 12, 13, 14) and len(stack) >= 2:
+            (b1, b2), (a1, a2) = stack.pop(), stack.pop()
+            if op == 11:
+                stack.append((a1 + b1, a2 + b2))
+            elif op == 12:
+                stack.append((a1 - b2, a2 - b1))
+            elif op == 13:
+                stack.append((a1 * b1, a2 * b2))
+            elif b1:
+                stack.append((a1 / b1, a2 / b1))
+        else:
+            return None
+        i += 1
+    return stack[-1] if len(stack) == 1 else None
+
+
 def read_table(g, at):
     def record(a):
         r = g.read(a, RECORD)
@@ -98,13 +150,23 @@ def read_table(g, at):
 
     while record(at - RECORD):
         at -= RECORD
+    attrs = attribute_names(g)
     out = []
     while (rec := record(at)):
         name, r = rec
         v = struct.unpack('>128I', r)
         groups = lambda off: [x for x in v[off // 4:off // 4 + 16] if x != 0xFFFFFFFF]
+        stats = []
+        for slot in range(4):
+            attr, param, _, ptr, _, size = v[84 + slot * 6:90 + slot * 6]
+            if attr == 0xFFFFFFFF or attr >= len(attrs):
+                continue
+            words = struct.unpack('>%dI' % (size // 4), g.read(ptr, size)) if ptr and size else ()
+            rng = formula_range(words)
+            stats.append([attrs[attr], -1 if param == 0xFFFFFFFF else param] + ([round(rng[0], 4), round(rng[1], 4)] if rng else [None, None]))
         out.append({'gbid': v[2], 'name': name[4:], 'kind': v[3], 'level': v[10], 'requiredLevel': v[14],
-                    'family': v[22], 'family2': v[23], 'groups': groups(128), 'excludedGroups': groups(224), 'qualityMask': v[80]})
+                    'family': v[22], 'family2': v[23], 'groups': groups(128), 'excludedGroups': groups(224),
+                    'qualityMask': v[80], 'stats': stats, 'rareNameLists': [v[20], v[21]]})
         at += RECORD
     return out
 
@@ -133,10 +195,14 @@ def read_item_rolls(g, base, size, items):
     for gb, name in want.items():
         if gb in found:
             continue
+        # Other tables point at the same name; the item table is the one whose neighbours are items too.
         at = -1
         for m in re.finditer(rb'\0' + re.escape(name.encode()) + rb'\0', data):
-            i = data.find(struct.pack('>III', base + m.start() + 1, 0, gb))
-            if i >= 0 and i % 4 == 0:
+            pat = struct.pack('>III', base + m.start() + 1, 0, gb)
+            i = data.find(pat)
+            while i >= 0 and not (i % 4 == 0 and (record(i - ITEM_RECORD) or record(i + ITEM_RECORD))):
+                i = data.find(pat, i + 1)
+            if i >= 0:
                 at = i
                 break
         if at < 0:
@@ -146,7 +212,7 @@ def read_item_rolls(g, base, size, items):
         while (g_ := record(at)) is not None:
             v = struct.unpack_from('>%dI' % (ITEM_RECORD // 4), data, at)
             families, levels = v[1224 // 4:1224 // 4 + 6], v[1248 // 4:1248 // 4 + 6]
-            found[g_] = [[f, l] for f, l in zip(families, levels) if f != 0xFFFFFFFF]
+            found[g_] = ([[f, l] for f, l in zip(families, levels) if f not in (0, 0xFFFFFFFF)], [v[25], v[26]])
             at += ITEM_RECORD
     return found, present
 
@@ -169,12 +235,12 @@ def main(out):
         items = json.load(f)
     rolls, present = read_item_rolls(g, *region_of(g, table), items)
     for i in items:
-        i['affixRolls'] = rolls.get(gbid(i['name']), [])
+        i['affixRolls'], i['rareNameLists'] = rolls.get(gbid(i['name']), ([], []))
         i['console'] = gbid(i['name']) in present or i['table'] == 'Console'
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(items, f, indent=1)
     print('%d of %d items exist on console, %d roll legendary affixes' % (
-        sum(i['console'] for i in items), len(items), sum(1 for r in rolls.values() if r)))
+        sum(i['console'] for i in items), len(items), sum(1 for r, _ in rolls.values() if r)))
 
 
 if __name__ == '__main__':
