@@ -266,9 +266,8 @@ class ProgressDialog(tk.Toplevel):
             self.quest.set(found[1]['name'])
             self.step.set(next((st['text'] for st in found[1]['steps'] if st['uid'] == step), found[1]['steps'][0]['text']))
         ttk.Label(f, text='In PC proxy mode the game starts here ("Continue"); on the console side it is the\n'
-                  '"Resume" quest. A difficulty above the unlocked ones is unlocked too.\n'
-                  'PC proxy: Act I quests work on every difficulty; starting in Act II-IV currently\n'
-                  'disconnects the PC client (the console game itself starts).', foreground='#777'
+                  '"Resume" quest, in the town of its act. A difficulty above the unlocked ones is unlocked too.',
+                  foreground='#777'
                   ).grid(row=8, column=0, columnspan=3, sticky='w', pady=6)
         ttk.Button(f, text='OK', command=self.ok).grid(row=9, column=2, sticky='e')
         self.grab_set()

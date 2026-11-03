@@ -349,6 +349,9 @@ LEVEL_XP = [1200, 3900, 8400, 15000, 24000, 35700, 50400, 68025, 88825, 113050, 
             3770125, 4076925, 4400925, 4742525, 5102125, 5480125, 5876925, 6292925, 6728525, 7184125, 8240125, 9367125,
             10567125, 11842125, 13194125, 14625125, 16137125, 17732125, 19412125, 21179125]
 DIFFICULTIES = ['Normal', 'Nightmare', 'Hell', 'Inferno']
+# The game numbers acts 0, 100, 200, 300 (Act I-IV). Any other act makes it exit with a fatal error when the hero
+# enters the game, as it finds no world to put them in.
+ACT_STEP = 100
 # Hero digest player_flags, as the client reads them (bit 1 is a female hero).
 HARDCORE_FLAG, DEAD_FLAG = 0x1, 0x8
 
@@ -428,13 +431,13 @@ class Hero:
     def last_played(self):
         """(difficulty, act, quest sno, step uid) the game starts the hero at."""
         q = self.digest.get(13, 0xFFFFFFFF)
-        return self._dz(11), self._dz(9), q - (1 << 32) if q >= 1 << 31 else q, self._dz(14, -1)
+        return self._dz(11), self._dz(9) // ACT_STEP, q - (1 << 32) if q >= 1 << 31 else q, self._dz(14, -1)
 
     def unlock_progress(self, difficulty, quests):
         """Unlocks every act and every difficulty up to `difficulty` (0 Normal .. 3 Inferno): all story quests count
         as played to their end on those difficulties, so any quest and checkpoint can be picked when starting a game."""
         d = self.digest
-        d.set(10, d3save.zigzag(3))                                        # highest unlocked act: Act IV
+        d.set(10, d3save.zigzag(3 * ACT_STEP))                             # highest unlocked act: Act IV
         d.set(12, d3save.zigzag(max(difficulty, self.highest_difficulty)))
         d.set(16, d3save.zigzag(max(difficulty - 1, self._dz(16, -1))))   # highest completed difficulty
         had = {(e.get(1), d3save.unzigzag(e.get(2, 0))) for e in d.subs(8)}
@@ -456,9 +459,10 @@ class Hero:
         self.dirty = True
 
     def start_at(self, difficulty, act, sno, step):
-        """Where the hero starts the next game: the quest and checkpoint shown under "Resume" when starting a game."""
+        """Where the hero starts the next game: the quest and checkpoint shown under "Resume" when starting a game.
+        `act` is 0 for Act I .. 3 for Act IV."""
         d = self.digest
-        for num, value in ((9, act), (11, difficulty)):
+        for num, value in ((9, act * ACT_STEP), (11, difficulty)):
             d.set(num, d3save.zigzag(value))
         d.set(13, sno & 0xFFFFFFFF, d3save.FIXED32)
         d.set(14, d3save.zigzag(step))

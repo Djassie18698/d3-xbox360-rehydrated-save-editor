@@ -68,9 +68,10 @@ wearing items in all six follower slots; a rare's name and an item in the hardco
 
 Tested in game (PC proxy): everything unlocked up to Inferno and a level 35 hero starting in New Tristram on Hell at
 "A Shattered Crown"; the hero list showing a dead hardcore hero as "Dead" and a revived one as playable; stash tabs,
-artisan levels and quest progress kept when the game saves again. Starting in Act II-IV through the PC proxy currently
-disconnects the PC client after the console has started the game; Act I works on every difficulty. Nightmare, Hell and
-Inferno through the PC proxy need a Rehydrated.Bnet that offers a game factory per difficulty. Bulk add, copies and
+artisan levels and quest progress kept when the game saves again; starting in Act II (Normal), Act III (Hell) and Act IV
+(Normal). The game numbers acts 0, 100, 200 and 300; editor versions before this fix wrote 1-3, which made the game
+exit with a fatal error on entering Act II-IV (open the hero and pick the quest again to fix such a save). Nightmare,
+Hell and Inferno through the PC proxy need a Rehydrated.Bnet that offers a game factory per difficulty. Bulk add, copies and
 presets are checked with the editor's own test on a save copy.
 
 Not supported: typing exact stat numbers (stats come from the game's affix tables; stack affixes instead) and a
