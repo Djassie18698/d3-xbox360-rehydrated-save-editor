@@ -54,6 +54,38 @@ def string_list(mpq, path):
     return out
 
 
+STEP_RECORD = 0xE0   # QuestStep: 64-byte name, then the step uid
+
+
+def story_quests(core, text):
+    """The story quests of each act in order (from the Act files), with the checkpoints the game lets you start at:
+    the steps that have a Battle.net text ("Begin quest." is the start, uid -1) and the completion step's uid."""
+    quests = {}
+    for path in core.listfile():
+        if path.startswith('Quest\\'):
+            d = core.read(path.replace('\\', '/'))
+            quests[struct.unpack_from('<i', d, 0x10)[0]] = (path[6:-4], d)
+    acts = []
+    for act in ('A1', 'A2', 'A3', 'A4'):
+        d = core.read('Act/%s.act' % act)
+        snos = [v for v in struct.unpack_from('<%di' % (len(d) // 4), d) if v in quests]
+        out = []
+        for sno in snos:
+            name, d = quests[sno]
+            words = string_list(text, 'StringList/Quest_%s.stl' % name)
+            steps_at, steps_size = struct.unpack_from('<ii', d, 0x68)
+            done_at, _ = struct.unpack_from('<ii', d, 0x78)
+            steps = [{'uid': -1, 'text': words.get('UnassignedStepBNetText', 'Begin quest.')}]
+            for o in range(steps_at + 0x10, steps_at + 0x10 + steps_size, STEP_RECORD):
+                uid, = struct.unpack_from('<i', d, o + 64)
+                if 'Step%dBNetText' % uid in words:
+                    steps.append({'uid': uid, 'text': words['Step%dBNetText' % uid]})
+            out.append({'sno': sno, 'name': words.get('Name', name), 'internal': name, 'steps': steps,
+                        'completed': struct.unpack_from('<i', d, done_at + 0x10 + 64)[0]})
+        acts.append(out)
+    return acts
+
+
 def main(client, out):
     mpqs = Path(client) / 'Data_D3' / 'PC' / 'MPQs'
     core, text = MPQ(mpqs / 'CoreData.mpq'), MPQ(mpqs / 'enGB_Text.mpq')
@@ -107,6 +139,8 @@ def main(client, out):
 
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
+    quests = story_quests(core, text)
+    (out / 'quests.json').write_text(json.dumps(quests, indent=1), encoding='utf-8')
     (out / 'items.json').write_text(json.dumps(items, indent=1), encoding='utf-8')
     (out / 'text.json').write_text(json.dumps(texts, indent=0, ensure_ascii=False), encoding='utf-8')
     print('%d items (%d legendary), %d item types' % (len(items), sum(i['legendary'] for i in items), len(types)))

@@ -1,6 +1,6 @@
 """Diablo III save editor for the original Xbox 360 release (2013) running in Rehydrated: items, affixes, gems, rare
-names, follower gear, gold, hero level and Paragon level."""
-import os, random, sys, tkinter as tk
+names, follower gear, item presets, gold, hero level, quest progress, Paragon level, artisans and stash tabs."""
+import json, os, random, sys, tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import d3save
@@ -224,12 +224,160 @@ class AffixDialog(tk.Toplevel):
             self.destroy()
 
 
+class ProgressDialog(tk.Toplevel):
+    """Unlocks difficulties, acts and quests for a hero and picks where the next game starts."""
+
+    def __init__(self, app, hero):
+        super().__init__(app.root)
+        self.app, self.hero, self.result = app, hero, None
+        self.quests = app.quests
+        self.title('Quest progress - %s' % hero.name)
+        self.transient(app.root)
+        f = ttk.Frame(self, padding=10)
+        f.pack(fill='both', expand=True)
+        ttk.Label(f, text='Unlock', font=('Segoe UI', 10, 'bold')).grid(row=0, column=0, columnspan=3, sticky='w')
+        ttk.Label(f, text='All acts and quests up to').grid(row=1, column=0, sticky='w')
+        self.unlock = tk.StringVar(value=sg.DIFFICULTIES[max(hero.highest_difficulty, 0)])
+        ttk.Combobox(f, textvariable=self.unlock, values=sg.DIFFICULTIES, state='readonly', width=12).grid(row=1, column=1, sticky='w', padx=6)
+        self.do_unlock = tk.BooleanVar(value=True)
+        ttk.Checkbutton(f, text='Unlock', variable=self.do_unlock).grid(row=1, column=2, sticky='w')
+        ttk.Label(f, text='Every story quest counts as played on that difficulty and the ones below, and all\n'
+                  'waypoints are active.', foreground='#777').grid(row=2, column=0, columnspan=3, sticky='w', pady=(0, 8))
+
+        ttk.Label(f, text='Next game starts at', font=('Segoe UI', 10, 'bold')).grid(row=3, column=0, columnspan=3, sticky='w')
+        diff, act, sno, step = hero.last_played
+        self.diff = tk.StringVar(value=sg.DIFFICULTIES[diff] if 0 <= diff < 4 else sg.DIFFICULTIES[0])
+        self.act = tk.StringVar()
+        self.quest = tk.StringVar()
+        self.step = tk.StringVar()
+        rows = [('Difficulty', self.diff, sg.DIFFICULTIES, 14), ('Act', self.act, ['Act %s' % r for r in ('I', 'II', 'III', 'IV')], 14),
+                ('Quest', self.quest, [], 40), ('Checkpoint', self.step, [], 60)]
+        self.boxes = {}
+        for n, (label, var, values, width) in enumerate(rows):
+            ttk.Label(f, text=label).grid(row=4 + n, column=0, sticky='w')
+            box = ttk.Combobox(f, textvariable=var, values=values, state='readonly', width=width)
+            box.grid(row=4 + n, column=1, columnspan=2, sticky='w', padx=6, pady=2)
+            self.boxes[label] = box
+        self.act.trace_add('write', lambda *_: self.fill_quests())
+        self.quest.trace_add('write', lambda *_: self.fill_steps())
+        found = next(((a, q) for a, quests in enumerate(self.quests) for q in quests if q['sno'] == sno), None)
+        self.act.set(self.boxes['Act']['values'][found[0] if found else max(0, min(act, 3))])
+        if found:
+            self.quest.set(found[1]['name'])
+            self.step.set(next((st['text'] for st in found[1]['steps'] if st['uid'] == step), found[1]['steps'][0]['text']))
+        ttk.Label(f, text='In PC proxy mode the game starts here ("Continue"); on the console side it is the\n'
+                  '"Resume" quest. A difficulty above the unlocked ones is unlocked too.\n'
+                  'PC proxy: Act I quests work on every difficulty; starting in Act II-IV currently\n'
+                  'disconnects the PC client (the console game itself starts).', foreground='#777'
+                  ).grid(row=8, column=0, columnspan=3, sticky='w', pady=6)
+        ttk.Button(f, text='OK', command=self.ok).grid(row=9, column=2, sticky='e')
+        self.grab_set()
+
+    def act_index(self):
+        values = list(self.boxes['Act']['values'])
+        return values.index(self.act.get()) if self.act.get() in values else 0
+
+    def fill_quests(self):
+        names = [q['name'] for q in self.quests[self.act_index()]]
+        self.boxes['Quest']['values'] = names
+        if self.quest.get() not in names:
+            self.quest.set(names[0] if names else '')
+
+    def chosen_quest(self):
+        return next((q for q in self.quests[self.act_index()] if q['name'] == self.quest.get()), None)
+
+    def fill_steps(self):
+        q = self.chosen_quest()
+        texts = [st['text'] for st in q['steps']] if q else []
+        self.boxes['Checkpoint']['values'] = texts
+        if self.step.get() not in texts:
+            self.step.set(texts[0] if texts else '')
+
+    def ok(self):
+        q = self.chosen_quest()
+        if not q:
+            return
+        step = next(st['uid'] for st in q['steps'] if st['text'] == self.step.get())
+        unlock = sg.DIFFICULTIES.index(self.unlock.get()) if self.do_unlock.get() else None
+        self.result = (unlock, sg.DIFFICULTIES.index(self.diff.get()), self.act_index(), q['sno'], step, q['name'])
+        self.destroy()
+
+
+BULK_KINDS = {
+    'Every legendary': lambda i: i['legendary'],
+    'Legendary weapons': lambda i: i['legendary'] and i['table'] == 'Items_Legendary_Weapons',
+    'Legendary armor': lambda i: i['legendary'] and i['table'] == 'Items_Legendary' and i['type'] not in ('Ring', 'Amulet'),
+    'Legendary rings and amulets': lambda i: i['legendary'] and i['type'] in ('Ring', 'Amulet'),
+    'Best gem of each kind (stacks)': None,
+    'Crafting materials (stacks)': lambda i: i['type'] == 'CraftingReagent',
+    'Dyes (stacks)': lambda i: i['type'] == 'Dye',
+}
+
+
+def bulk_items(data, kind, type_display='(all)', level=70):
+    """The items a bulk add puts in, highest level first."""
+    pool = [i for i in data.items if i.get('console', True) and i['level'] <= level]
+    test = BULK_KINDS[kind]
+    if test is None:   # gems: the best of each kind (Ruby, Emerald, ...) up to the level
+        best = {}
+        for i in pool:
+            if i['type'] == 'Gem':
+                gem = i['name'].split('_')[0]
+                if gem not in best or i['level'] > best[gem]['level']:
+                    best[gem] = i
+        chosen = list(best.values())
+    else:
+        chosen = [i for i in pool if test(i)]
+    if type_display != '(all)':
+        chosen = [i for i in chosen if i['typeDisplay'] == type_display]
+    return sorted(chosen, key=lambda i: (-i['level'], i['display']))
+
+
+class BulkDialog(tk.Toplevel):
+    """Adds many items at once until the stash or backpack is full."""
+
+    def __init__(self, app, hero_mode):
+        super().__init__(app.root)
+        self.app, self.result = app, None
+        self.title('Bulk add')
+        self.transient(app.root)
+        f = ttk.Frame(self, padding=10)
+        f.pack(fill='both', expand=True)
+        self.kind = tk.StringVar(value=next(iter(BULK_KINDS)))
+        self.type = tk.StringVar(value='(all)')
+        self.level = tk.IntVar(value=70)
+        self.stack = tk.IntVar(value=100)
+        ttk.Label(f, text='Add').grid(row=0, column=0, sticky='w')
+        ttk.Combobox(f, textvariable=self.kind, values=list(BULK_KINDS), state='readonly', width=30).grid(row=0, column=1, sticky='w', padx=6)
+        types = sorted({i['typeDisplay'] for i in app.data.items if i['legendary'] and i.get('console', True)})
+        ttk.Label(f, text='Only type').grid(row=1, column=0, sticky='w')
+        ttk.Combobox(f, textvariable=self.type, values=['(all)'] + types, state='readonly', width=30).grid(row=1, column=1, sticky='w', padx=6)
+        ttk.Label(f, text='Up to item level').grid(row=2, column=0, sticky='w')
+        ttk.Spinbox(f, from_=1, to=70, textvariable=self.level, width=6).grid(row=2, column=1, sticky='w', padx=6)
+        ttk.Label(f, text='Stack size').grid(row=3, column=0, sticky='w')
+        ttk.Spinbox(f, from_=1, to=1000, textvariable=self.stack, width=6).grid(row=3, column=1, sticky='w', padx=6)
+        where = 'backpack' if hero_mode else 'stash'
+        ttk.Label(f, text='Into the %s, highest level first, until it is full.\nLegendaries get their own affix rolls.' % where,
+                  foreground='#777').grid(row=4, column=0, columnspan=2, sticky='w', pady=6)
+        ttk.Button(f, text='Add', command=self.ok).grid(row=5, column=1, sticky='e')
+        self.grab_set()
+
+    def ok(self):
+        try:
+            level, stack = int(self.level.get()), max(1, int(self.stack.get()))
+        except (ValueError, tk.TclError):
+            return
+        self.result = (bulk_items(self.app.data, self.kind.get(), self.type.get(), level), stack)
+        self.destroy()
+
+
 class App:
     def __init__(self, root):
         self.root = root
         root.title('Diablo III Save Editor - Xbox 360 (2013) saves in Rehydrated')
         root.geometry('1280x720')
         self.data = sg.GameData()
+        self.quests = sg.load_quests()
         self.save = None
         self.current = None      # Hero, or the Account for a stash
         self.partition = 0       # the stash partition shown when the account is selected
@@ -265,6 +413,19 @@ class App:
         ttk.Label(acct, text='Paragon').grid(row=2, column=0, sticky='w')
         ttk.Spinbox(acct, from_=0, to=sg.MAX_PARAGON, textvariable=self.paragon, width=6).grid(row=2, column=1, sticky='w', padx=4)
         ttk.Button(acct, text='Set', command=self.set_paragon).grid(row=2, column=2)
+        self.tabs = tk.IntVar()
+        ttk.Label(acct, text='Stash tabs').grid(row=3, column=0, sticky='w')
+        ttk.Spinbox(acct, from_=1, to=3, textvariable=self.tabs, width=6).grid(row=3, column=1, sticky='w', padx=4)
+        ttk.Button(acct, text='Set', command=self.set_tabs).grid(row=3, column=2)
+        self.artisan_vars = []
+        for n, name in enumerate(sg.ARTISANS):
+            var = tk.IntVar()
+            self.artisan_vars.append(var)
+            ttk.Label(acct, text=name).grid(row=4 + n, column=0, sticky='w')
+            ttk.Spinbox(acct, from_=0, to=sg.MAX_ARTISAN, textvariable=var, width=6).grid(row=4 + n, column=1, sticky='w', padx=4)
+            ttk.Button(acct, text='Set', command=lambda n=n: self.set_artisan(n)).grid(row=4 + n, column=2)
+        self.hardcore_btn = ttk.Button(acct, text='Unlock hardcore heroes', command=self.unlock_hardcore)
+        self.hardcore_btn.grid(row=4 + len(sg.ARTISANS), column=0, columnspan=3, sticky='w', pady=(4, 0))
 
         herof = ttk.LabelFrame(left, text='Hero', padding=6)
         herof.pack(fill='x', pady=(6, 0))
@@ -276,6 +437,12 @@ class App:
         self.level_btn.grid(row=0, column=2)
         self.followers_btn = ttk.Button(herof, text='Unlock followers', command=self.unlock_followers)
         self.followers_btn.grid(row=1, column=0, columnspan=3, sticky='w', pady=(4, 0))
+        self.progress_btn = ttk.Button(herof, text='Quests and difficulty...', command=self.edit_progress)
+        self.progress_btn.grid(row=2, column=0, columnspan=3, sticky='w', pady=(4, 0))
+        self.revive_btn = ttk.Button(herof, text='Revive (hardcore)', command=self.revive)
+        self.revive_btn.grid(row=3, column=0, columnspan=3, sticky='w', pady=(4, 0))
+        self.hero_label = ttk.Label(herof, text='', foreground='#777', wraplength=240)
+        self.hero_label.grid(row=4, column=0, columnspan=3, sticky='w')
 
         mid = ttk.Frame(body, padding=6)
         body.add(mid, weight=4)
@@ -294,6 +461,10 @@ class App:
         ttk.Button(btns, text='Add item...', command=self.add_item).pack(side='left')
         ttk.Button(btns, text='Duplicate', command=self.duplicate).pack(side='left', padx=6)
         ttk.Button(btns, text='Delete', command=self.delete).pack(side='left')
+        ttk.Button(btns, text='Bulk add...', command=self.bulk_add).pack(side='left', padx=(18, 0))
+        ttk.Button(btns, text='Copy to...', command=self.copy_to).pack(side='left', padx=6)
+        ttk.Button(btns, text='Save preset...', command=self.save_preset).pack(side='left')
+        ttk.Button(btns, text='Load preset...', command=self.load_preset).pack(side='left', padx=6)
 
         right = ttk.LabelFrame(body, text='Selected item', padding=8)
         body.add(right, weight=2)
@@ -383,10 +554,16 @@ class App:
         self.owners.delete(0, 'end')
         self.owner_rows = [('stash', p) for p in self.save.account.partitions] + [('hero', h) for h in self.save.heroes]
         for kind, x in self.owner_rows:
-            self.owners.insert('end', 'Shared stash (%s)' % sg.PARTITION_NAMES[x] if kind == 'stash' else
-                               '%s - level %d %s' % (x.name, x.level, x.class_name))
+            self.owners.insert('end', self.owner_label(kind, x))
         self.owners.selection_set(select)
         self.show_owner()
+
+    @staticmethod
+    def owner_label(kind, x):
+        if kind == 'stash':
+            return 'Shared stash (%s)' % sg.PARTITION_NAMES[x]
+        state = ' (hardcore, dead)' if x.dead else ' (hardcore)' if x.hardcore else ''
+        return '%s - level %d %s%s' % (x.name, x.level, x.class_name, state)
 
     def reload(self):
         if self.save:
@@ -428,6 +605,59 @@ class App:
             self.current.unlock_followers()
             self.set_status('Templar, Scoundrel and Enchantress unlocked for %s; the Templar comes along (not saved yet).' % self.current.name)
 
+    def progress_text(self, hero):
+        diff, act, sno, step = hero.last_played
+        quest = next((q for quests in self.quests for q in quests if q['sno'] == sno), None)
+        unlocked = sg.DIFFICULTIES[hero.highest_difficulty] if 0 <= hero.highest_difficulty < 4 else '?'
+        where = '%s, %s' % (sg.DIFFICULTIES[diff] if 0 <= diff < 4 else '?', quest['name']) if quest else 'the start'
+        return 'Unlocked up to %s. Next game: %s' % (unlocked, where)
+
+    def edit_progress(self):
+        hero = self.current
+        if not isinstance(hero, sg.Hero):
+            return
+        d = ProgressDialog(self, hero)
+        self.root.wait_window(d)
+        if not d.result:
+            return
+        unlock, diff, act, sno, step, name = d.result
+        if unlock is not None or diff > hero.highest_difficulty:
+            hero.unlock_progress(max(unlock or 0, diff), self.quests)
+        hero.start_at(diff, act, sno, step)
+        self.show_owner()
+        self.set_status('%s: next game starts at %s on %s (not saved yet).' % (hero.name, name, sg.DIFFICULTIES[diff]))
+
+    def revive(self):
+        hero = self.current
+        if isinstance(hero, sg.Hero) and hero.dead:
+            hero.revive()
+            self.fill_owners(self.owners.curselection()[0])
+            self.set_status('%s is alive again (not saved yet).' % hero.name)
+
+    def set_tabs(self):
+        try:
+            tabs = int(self.tabs.get())
+        except (ValueError, tk.TclError):
+            return
+        self.save.account.set_stash_tabs(tabs, self.partition)
+        self.show_owner()
+        self.set_status('%s stash: %d tabs (not saved yet).' % (sg.PARTITION_NAMES[self.partition], self.save.account.get_stash_tabs(self.partition)))
+
+    def set_artisan(self, n):
+        try:
+            level = int(self.artisan_vars[n].get())
+        except (ValueError, tk.TclError):
+            return
+        self.save.account.set_artisan(n, level, self.partition)
+        self.show_owner()
+        self.set_status('%s %s is now level %d (not saved yet).' % (sg.PARTITION_NAMES[self.partition], sg.ARTISANS[n],
+                                                                   self.save.account.get_artisan(n, self.partition)))
+
+    def unlock_hardcore(self):
+        self.save.account.unlock_hardcore()
+        self.show_owner()
+        self.set_status('Hardcore heroes can now be created (not saved yet).')
+
     def set_gold(self):
         try:
             amount = int(self.gold.get().replace('.', '').replace(',', ''))
@@ -461,11 +691,21 @@ class App:
         else:
             self.current, self.partition = x, 0
         is_hero = kind == 'hero'
-        for w in (self.level_spin, self.level_btn, self.followers_btn):
+        for w in (self.level_spin, self.level_btn, self.followers_btn, self.progress_btn):
             w.state(['!disabled'] if is_hero else ['disabled'])
+        self.revive_btn.state(['!disabled'] if is_hero and self.current.dead else ['disabled'])
         if is_hero:
             self.level_var.set(self.current.level)
+            self.hero_label.config(text=self.progress_text(self.current))
+            if self.current.hardcore:
+                self.partition = 1   # a hardcore hero's gold, Paragon, artisans and stash
+        else:
+            self.hero_label.config(text='')
         acct = self.save.account
+        self.tabs.set(acct.get_stash_tabs(self.partition))
+        for n, var in enumerate(self.artisan_vars):
+            var.set(acct.get_artisan(n, self.partition))
+        self.hardcore_btn.state(['disabled'] if acct.hardcore_unlocked else ['!disabled'])
         self.acct_label.config(text='%s heroes (shared stash, gold, Paragon)' % sg.PARTITION_NAMES[self.partition])
         self.gold.set(str(acct.get_gold(self.partition)))
         self.paragon.set(acct.get_paragon(self.partition))
@@ -727,6 +967,102 @@ class App:
             self.owner_container().remove_with_gems(item)
             self.mark()
             self.show_owner()
+
+    # --- many items, copies and presets
+    def place_in(self, container, slot, item_height):
+        w, h = sg.grid_of(slot)
+        return container.free_square(slot, w, h, item_height, self.data)
+
+    def bulk_add(self):
+        if not self.current:
+            return
+        hero = isinstance(self.current, sg.Hero)
+        d = BulkDialog(self, hero)
+        self.root.wait_window(d)
+        if not d.result:
+            return
+        chosen, stack = d.result
+        added = self.add_many(chosen, stack)
+        self.set_status('Added %d of %d items%s (not saved yet).' % (added, len(chosen), '; the rest did not fit' if added < len(chosen) else ''))
+
+    def add_many(self, infos, stack):
+        hero = isinstance(self.current, sg.Hero)
+        c, slot = self.owner_container(), it.BACKPACK if hero else it.STASH
+        added = 0
+        for info in infos:
+            square = self.place_in(c, slot, self.data.height(info['gbid']))
+            if square is None:
+                break
+            stackable = info['type'] in STACKABLE
+            c.add(sg.make_item(c, self.data, info, slot, square, stack=stack if stackable else None))
+            added += 1
+        if added:
+            self.mark()
+            self.show_owner()
+        return added
+
+    def copy_to(self):
+        item = self.selected()
+        if not item:
+            messagebox.showinfo('Copy to', 'Pick an item first.')
+            return
+        rows = [(self.owner_label(k, x), (k, x)) for k, x in self.owner_rows]
+        d = SearchList(self, 'Copy to', [('Where', 560)], rows, 'Into the backpack of a hero or a shared stash.')
+        self.root.wait_window(d)
+        if d.result:
+            self.copy_item(item, *d.result)
+
+    def copy_item(self, item, kind, x):
+        acct = self.save.account
+        owner, c, slot = (acct, acct.stash(x), it.STASH) if kind == 'stash' else (x, x.container, it.BACKPACK)
+        square = self.place_in(c, slot, self.data.height(item.gbid))
+        if square is None:
+            messagebox.showwarning('No room', 'No free space there.')
+            return None
+        copy = sg.place_item(item.msg, [g.gbid for g in item.gems], c, slot, square)
+        owner.dirty = True
+        self.show_owner()
+        self.set_status('Copied %s (not saved yet).' % self.data.item_name(item.gbid))
+        return copy
+
+    def save_preset(self, path=None):
+        item = self.selected()
+        if not item:
+            messagebox.showinfo('Save preset', 'Pick an item first.')
+            return
+        name = self.data.rare_name_text(self.data.by_gbid.get(item.gbid, {}), item.rare_name) or self.data.item_name(item.gbid)
+        path = path or filedialog.asksaveasfilename(
+            title='Save item preset', defaultextension='.d3item', filetypes=[('Item presets', '*.d3item'), ('All files', '*.*')],
+            initialfile=''.join(ch for ch in name if ch.isalnum() or ch in ' -_') + '.d3item')
+        if not path:
+            return
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(dict(sg.item_preset(item), name=name), f, indent=1)
+        self.set_status('Saved %s to %s.' % (name, path))
+
+    def load_preset(self, paths=None):
+        if not self.current:
+            return
+        paths = paths or filedialog.askopenfilenames(title='Load item presets', filetypes=[('Item presets', '*.d3item'), ('All files', '*.*')])
+        hero = isinstance(self.current, sg.Hero)
+        c, slot = self.owner_container(), it.BACKPACK if hero else it.STASH
+        added = []
+        for path in paths:
+            try:
+                with open(path, encoding='utf-8') as f:
+                    msg, gems = sg.preset_record(json.load(f))
+            except (OSError, ValueError, KeyError) as e:
+                messagebox.showerror('Load preset', '%s:\n%s' % (os.path.basename(path), e))
+                continue
+            square = self.place_in(c, slot, self.data.height(it.Item(msg).gbid))
+            if square is None:
+                messagebox.showwarning('No room', 'The %s is full.' % it.SLOT_NAMES[slot].lower())
+                break
+            added.append(self.data.item_name(sg.place_item(msg, gems, c, slot, square).gbid))
+        if added:
+            self.mark()
+            self.show_owner()
+            self.set_status('Added %s (not saved yet).' % ', '.join(added))
 
     def set_status(self, text):
         self.status.config(text=text)

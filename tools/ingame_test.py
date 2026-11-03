@@ -9,6 +9,8 @@ cases: basic   normal items in the backpack and equipment slots, a legendary in 
        crazy   level 60 hero with a dagger of 29 stacked top-tier affixes in the main hand
        legend  level 60 hero with The Barber (legendary dagger) in the main hand, and two PC-only items
        sockets level 60 hero with a dagger of 3 sockets (the most the game allows), each holding a Radiant Star Ruby, in the main hand
+       progress level 35, everything unlocked up to Inferno, start at Siegebreaker on Hell, 3 stash tabs, artisans 10,
+               hardcore unlocked, rings on stash tabs 2 and 3, and two hardcore copies of another hero (dead, revived)
        extras  Paragon 50, a socketed dagger with a Radiant Star Ruby, a named rare helm, the Templar in full gear
                (follower slots 64-69) and a ring in the hardcore stash
 The hero is the last played one unless a name is given."""
@@ -95,6 +97,27 @@ def make(case, real, root, name=None):
         hc = save.account.stash(1)
         hc.add(sg.make_item(hc, data, ITEM['Ring_02'], it.STASH, 0))
         save.account.dirty = True
+    elif case == 'progress':
+        hero.level = 35
+        quests = sg.load_quests()
+        hero.unlock_progress(3, quests)
+        siege = next(q for q in quests[2] if q['internal'] == 'TraverseBridge')
+        hero.start_at(2, 2, siege['sno'], -1)          # Hell, Act III, Siegebreaker
+        acct = save.account
+        acct.set_stash_tabs(3)
+        for a in range(len(sg.ARTISANS)):
+            acct.set_artisan(a, sg.MAX_ARTISAN)
+        acct.unlock_hardcore()
+        sc = acct.container
+        for square in (70, 140):                     # first square of the second and third tab
+            sc.add(sg.make_item(sc, data, ITEM['Ring_02'], it.STASH, square))
+        # Hardcore copies of another hero: one dead, one revived.
+        other = next(h for h in save.heroes if h is not hero and h.msg.sub(3).subs(2))
+        for name, flags, revive in (('HcDead', sg.HARDCORE_FLAG | sg.DEAD_FLAG, False), ('HcAlive', sg.HARDCORE_FLAG | sg.DEAD_FLAG, True)):
+            copy = save.clone_hero(other, name)
+            copy.digest.set(6, other.flags | flags)
+            if revive:
+                copy.revive()
     else:
         sys.exit(__doc__)
     save.save()

@@ -1,0 +1,486 @@
+[
+ [
+  {
+   "sno": 87700,
+   "name": "The Fallen Star",
+   "internal": "ProtectorOfTristram",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 50,
+     "text": "Help Captain Rumford destroy the wretched mothers threatening New Tristram."
+    }
+   ],
+   "completed": 26
+  },
+  {
+   "sno": 72095,
+   "name": "The Legacy of Cain",
+   "internal": "RescueCain",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 51,
+     "text": "Explore the hidden cellar beneath Adria's hut."
+    }
+   ],
+   "completed": 21
+  },
+  {
+   "sno": 72221,
+   "name": "A Shattered Crown",
+   "internal": "Blacksmith",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 35,
+     "text": "Fight through the Weeping Hollow in order to reach the Cemetery of the Forsaken and retrieve the Skeleton King's crown."
+    }
+   ],
+   "completed": 17
+  },
+  {
+   "sno": 72061,
+   "name": "Reign of the Black King",
+   "internal": "SkeletonKing",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 44,
+     "text": "Search for the Royal Crypts beneath the Cathedral."
+    },
+    {
+     "uid": 16,
+     "text": "Enter the Crypt of the Skeleton King."
+    }
+   ],
+   "completed": 24
+  },
+  {
+   "sno": 117779,
+   "name": "Sword of the Stranger",
+   "internal": "MeteorPiece",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 10,
+     "text": "Retrieve the first piece of the Stranger's sword from the Fields of Misery."
+    }
+   ],
+   "completed": 7
+  },
+  {
+   "sno": 72738,
+   "name": "The Broken Blade",
+   "internal": "Nephalem_Power",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 26,
+     "text": "Gain entrance to the Drowned Temple to recover the second piece of the Stranger's sword."
+    }
+   ],
+   "completed": 21
+  },
+  {
+   "sno": 73236,
+   "name": "The Doom in Wortham",
+   "internal": "TownAttack",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    }
+   ],
+   "completed": 9
+  },
+  {
+   "sno": 72546,
+   "name": "Trailing the Coven",
+   "internal": "CainExit",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 36,
+     "text": "Journey through the khazra barricade to reach Leoric's Manor, where the cultists have taken the Stranger."
+    }
+   ],
+   "completed": 16
+  },
+  {
+   "sno": 72801,
+   "name": "The Imprisoned Angel",
+   "internal": "RescueTyrael",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 2,
+     "text": "Search for the Stranger in the Halls of Agony beneath Leoric's Manor."
+    },
+    {
+     "uid": 36,
+     "text": "Locate the Chamber of Suffering and kill the Butcher."
+    }
+   ],
+   "completed": 13
+  },
+  {
+   "sno": 136656,
+   "name": "Return to New Tristram",
+   "internal": "ReturnToTristram",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    }
+   ],
+   "completed": 4
+  }
+ ],
+ [
+  {
+   "sno": 80322,
+   "name": "Shadows in the Desert",
+   "internal": "CanyonBridge",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 106,
+     "text": "Speak with Iron Wolf Jarulf about the road to Alcarnus."
+    }
+   ],
+   "completed": 10
+  },
+  {
+   "sno": 93396,
+   "name": "The Road to Alcarnus",
+   "internal": "KhamsinGate",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 46,
+     "text": "Tell Lieutenant Vachem to open the Khasim Gate so you may reach Alcarnus."
+    }
+   ],
+   "completed": 10
+  },
+  {
+   "sno": 74128,
+   "name": "City of Blood",
+   "internal": "Alcarnus",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 54,
+     "text": "Search Alcarnus for Maghda's Lair."
+    }
+   ],
+   "completed": 10
+  },
+  {
+   "sno": 57331,
+   "name": "A Royal Audience",
+   "internal": "Caldeum",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    }
+   ],
+   "completed": 7
+  },
+  {
+   "sno": 78264,
+   "name": "Unexpected Allies",
+   "internal": "RescueAdria",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    }
+   ],
+   "completed": 8
+  },
+  {
+   "sno": 78266,
+   "name": "Betrayer of the Horadrim",
+   "internal": "ZoltunKulleHead",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 4,
+     "text": "Find the dungeon containing the head of Zoltun Kulle in the Dahlgur Oasis."
+    }
+   ],
+   "completed": 11
+  },
+  {
+   "sno": 57335,
+   "name": "Blood and Sand",
+   "internal": "ZoltunKulleBlood",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 52,
+     "text": "Journey through the aqueducts in order to reach the Desolate Sands."
+    }
+   ],
+   "completed": 8
+  },
+  {
+   "sno": 57337,
+   "name": "The Black Soulstone",
+   "internal": "Archives",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 41,
+     "text": "Retrieve the body of Zoltun Kulle from the Shadow Realm."
+    },
+    {
+     "uid": 26,
+     "text": "Confront  Zoltun Kulle in the Soulstone Chamber. "
+    }
+   ],
+   "completed": 6
+  },
+  {
+   "sno": 121792,
+   "name": "The Scouring of Caldeum",
+   "internal": "Evacuation",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    }
+   ],
+   "completed": 3
+  },
+  {
+   "sno": 57339,
+   "name": "Lord of Lies",
+   "internal": "Belial",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    }
+   ],
+   "completed": 3
+  }
+ ],
+ [
+  {
+   "sno": 93595,
+   "name": "The Siege of Bastion's Keep",
+   "internal": "KillTheBeast",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 8,
+     "text": "Light the signal beacons on the Skycrown Battlements."
+    }
+   ],
+   "completed": 3
+  },
+  {
+   "sno": 93684,
+   "name": "Turning the Tide",
+   "internal": "RaiseThe Catapults",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    }
+   ],
+   "completed": 2
+  },
+  {
+   "sno": 93697,
+   "name": "The Breached Keep",
+   "internal": "KillGluttony",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 18,
+     "text": "Find the breach in the Keep Depths."
+    },
+    {
+     "uid": 1,
+     "text": "Slay Ghom in the Bastion's Keep larder."
+    }
+   ],
+   "completed": 3
+  },
+  {
+   "sno": 203595,
+   "name": "Tremors in the Stone",
+   "internal": "SoulstoneOverload",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    }
+   ],
+   "completed": 8
+  },
+  {
+   "sno": 101756,
+   "name": "Machines of War",
+   "internal": "DestroyBallistas",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 1,
+     "text": "Destroy the demonic war machines raining Hell down upon Bastion's Keep."
+    }
+   ],
+   "completed": 3
+  },
+  {
+   "sno": 101750,
+   "name": "Siegebreaker",
+   "internal": "TraverseBridge",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 10,
+     "text": "Kill the Siegebreaker Assault Beast guarding Arreat Crater. "
+    }
+   ],
+   "completed": 3
+  },
+  {
+   "sno": 101758,
+   "name": "Heart of Sin",
+   "internal": "KillAzmodan",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 29,
+     "text": "Search the Tower of the Cursed for the second Sin Heart."
+    },
+    {
+     "uid": 1,
+     "text": "Defeat Azmodan in the Heart of Sin."
+    }
+   ],
+   "completed": 4
+  }
+ ],
+ [
+  {
+   "sno": 112498,
+   "name": "Fall of the High Heavens",
+   "internal": "Heaven_HeavensFall",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    }
+   ],
+   "completed": 12
+  },
+  {
+   "sno": 113910,
+   "name": "The Light of Hope",
+   "internal": "Heaven_RestorationOfHope",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 42,
+     "text": "Find and destroy the corrupt growths to reveal the Hell Rifts in the Gardens of Hope."
+    }
+   ],
+   "completed": 29
+  },
+  {
+   "sno": 114795,
+   "name": "Beneath the Spire",
+   "internal": "Heaven_HeavenlySeals",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    }
+   ],
+   "completed": 12
+  },
+  {
+   "sno": 114901,
+   "name": "Prime Evil",
+   "internal": "Heaven_CorruptedArch",
+   "steps": [
+    {
+     "uid": -1,
+     "text": "Begin quest."
+    },
+    {
+     "uid": 22,
+     "text": "Enter the Crystal Arch and face the Prime Evil."
+    }
+   ],
+   "completed": 5
+  }
+ ]
+]

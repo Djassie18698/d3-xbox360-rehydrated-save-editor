@@ -1,6 +1,6 @@
 # Diablo III (Xbox 360, 2013) save editor for Rehydrated
 
-An item, affix, gem, follower, gold, level and Paragon editor for the saves of **the original Xbox 360 release of Diablo III**
+An item, affix, gem, follower, gold, level, quest, artisan and Paragon editor for the saves of **the original Xbox 360 release of Diablo III**
 (September 2013, before Reaper of Souls) when it runs in **Rehydrated**, the PC recompilation of that game.
 
 | Works with | Does not work with |
@@ -42,8 +42,19 @@ OneDrive). If you start Rehydrated with another `--user_data_root`, use **Open f
   affixes; pick another from the list of names that item can have.
 - **Followers**: unlock the Templar, Scoundrel and Enchantress for a hero and equip their main hand, off-hand,
   special item, neck and rings.
-- **Hero level** (1-60): sets the level and the base Strength, Dexterity, Intelligence and Vitality the hero would
-  have at that level (a level 60 Wizard: 67 / 67 / 187 / 127).
+- **Hero level** (1-60): sets the level, the base Strength, Dexterity, Intelligence and Vitality the hero would
+  have at that level (a level 60 Wizard: 67 / 67 / 187 / 127) and an empty experience bar for that level.
+- **Quests and difficulty**: unlock every act and story quest up to Normal, Nightmare, Hell or Inferno (all waypoints
+  too), and choose where the next game starts: difficulty, act, quest and checkpoint, by the game's own quest names
+  ("Siegebreaker", "Kill the Siegebreaker Assault Beast..."). In PC proxy mode this is how you pick the quest: the
+  console side starts the game with "Continue".
+- **Hardcore**: unlock hardcore heroes for the account, and **revive** a dead hardcore hero.
+- **Artisans**: set the Blacksmith and Jeweler level (0-10), normal and hardcore.
+- **Stash tabs**: 1-3 tabs (70 squares each, the game's maximum is 210) for the normal and hardcore stash.
+- **Bulk add**: every legendary (or only weapons, armor, jewelry, one item type), the best gem of each kind, crafting
+  materials or dyes, into the stash or backpack until it is full.
+- **Copy to** another hero or stash, and **item presets**: save an item you built (affixes, sockets, gems, rare name)
+  as a `.d3item` file and load it onto any hero or stash, also in another save or on another PC.
 - **Paragon level** (0-100) for normal and hardcore heroes (on console it is shared by all heroes of the account);
   the bonus stats follow from it in game.
 - Duplicate and delete items, change stack sizes and durability, set gold for normal and hardcore.
@@ -55,9 +66,16 @@ Tested in game: items in the backpack, equipment slots and stash; legendaries; m
 its stats; Paragon 50 (shown as "60 (50)" with the bonus stats); a socketed Radiant Star Ruby (damage jumps); the Templar
 wearing items in all six follower slots; a rare's name and an item in the hardcore stash surviving a save.
 
-Not supported: typing exact stat numbers (stats come from the game's affix tables; stack affixes instead) and the
-experience towards the next normal level (it stays as it was; the game corrects it at the next level-up). Rare names
-are written the way the game stores them, but the in-game tooltip showing them has not been checked.
+Tested in game (PC proxy): everything unlocked up to Inferno and a level 35 hero starting in New Tristram on Hell at
+"A Shattered Crown"; the hero list showing a dead hardcore hero as "Dead" and a revived one as playable; stash tabs,
+artisan levels and quest progress kept when the game saves again. Starting in Act II-IV through the PC proxy currently
+disconnects the PC client after the console has started the game; Act I works on every difficulty. Nightmare, Hell and
+Inferno through the PC proxy need a Rehydrated.Bnet that offers a game factory per difficulty. Bulk add, copies and
+presets are checked with the editor's own test on a save copy.
+
+Not supported: typing exact stat numbers (stats come from the game's affix tables; stack affixes instead) and a
+bigger backpack (the game window only shows 60 squares). Rare names are written the way the game stores them, but the
+in-game tooltip showing them has not been checked.
 
 ## How it works
 
@@ -80,6 +98,14 @@ are written the way the game stores them, but the in-game tooltip showing them h
   Base stats are saved float attributes the game raises at each level-up: Strength `0x1EFB`, Dexterity `0x1EF7`,
   Intelligence `0x1EF3`, Vitality `0x1EDF` (level 1: 10 in the class's main stat, 9 Vitality, 8 in the others; per
   level +3 main stat, +2 Vitality, +1 others).
+- Hero progress is in the digest: highest unlocked act (10) and difficulty (12), highest completed difficulty (16),
+  last played act, difficulty, quest and step (9, 11, 13, 14), and the quest history (8: quest SNO, difficulty,
+  highest step played). Story quests, their order per act and their checkpoints (the steps with a Battle.net text) come
+  from the PC client's Act and Quest files (`data/quests.json`). Step uids are sint32.
+- Hero `player_flags` (digest 6): 1 hardcore, 2 female, 8 dead; the console data's killer name is cleared on revive.
+  The account digest flag 1 unlocks hardcore heroes.
+- Account partitions hold the artisans (field 4: one `CrafterData` per artisan, level in field 3) and the stash size
+  (`Shared_Stash_Slots`, attribute key `0x1FFF`, bounded 0-210 in the game).
 - Console legendaries were reworked: each lists up to 6 affix families (item record offset 1224) with a highest affix
   level (1248) and rolls one affix from each when it drops. Legendary-only affixes name the group `0xA14D315D` and rule
   item types out through their exclusion list.
@@ -88,7 +114,7 @@ are written the way the game stores them, but the in-game tooltip showing them h
 
 ## Rebuilding the data files
 
-- `data/items.json` and `data/text.json` (stat descriptions, rare name words):
+- `data/items.json`, `data/quests.json` and `data/text.json` (stat descriptions, rare name words):
   `python tools\gen_gamedata.py "<Diablo III 1.0.8 PC client folder>" data` (item names and ids are the same on PC
   1.0.8 and on console).
 - `data/affixes.json` and the console parts of `items.json` (legendary affix rolls, rare name lists, which items
@@ -96,7 +122,8 @@ are written the way the game stores them, but the in-game tooltip showing them h
   start Rehydrated, wait for the main menu, then `python tools\console_affixes.py`; it reads them from the running game.
   Run it after `gen_gamedata.py`.
 - `tools\ingame_test.py` prepares a copy of a save folder with test items (`basic`, `affix`, `crazy`, `legend`,
-  `extras`) to check in game; `tools\ui_test.py` runs the editor's own actions on a copy without showing the window.
+  `extras`, `progress`) to check in game; `tools\ui_test.py` and `tools\ui_test2.py` run the editor's own actions on a
+  copy without showing the window.
 
 ## Disclaimer
 

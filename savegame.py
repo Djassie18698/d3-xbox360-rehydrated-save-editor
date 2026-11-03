@@ -340,6 +340,34 @@ def base_stats(class_name, level):
     return stats
 
 
+EXPERIENCE_NEXT_KEY = 0x1F7F
+# Experience needed from each level to the next (levels 1-60), from the game's ExperienceTable; the console saves
+# a fresh level-1 hero with the same 1200.
+LEVEL_XP = [1200, 3900, 8400, 15000, 24000, 35700, 50400, 68025, 88825, 113050, 140950, 172775, 208775, 250250, 288750,
+            329000, 371000, 414750, 460250, 507500, 556500, 610875, 674625, 748250, 832250, 927125, 1033375, 1151500,
+            1282000, 1416125, 1560125, 1716925, 1886925, 2070525, 2268125, 2480125, 2706925, 2948925, 3206525, 3480125,
+            3770125, 4076925, 4400925, 4742525, 5102125, 5480125, 5876925, 6292925, 6728525, 7184125, 8240125, 9367125,
+            10567125, 11842125, 13194125, 14625125, 16137125, 17732125, 19412125, 21179125]
+DIFFICULTIES = ['Normal', 'Nightmare', 'Hell', 'Inferno']
+# Hero digest player_flags, as the client reads them (bit 1 is a female hero).
+HARDCORE_FLAG, DEAD_FLAG = 0x1, 0x8
+
+
+def load_quests():
+    """Story quests per act (data/quests.json): [{sno, name, steps: [{uid, text}], completed}]."""
+    try:
+        with open(os.path.join(DATA, 'quests.json'), encoding='utf-8') as f:
+            return json.load(f)
+    except OSError:
+        return [[], [], [], []]
+
+
+def _insert_field(msg, field, before):
+    """Adds a field in front of the first field numbered above `before`, the order the game writes them in."""
+    at = next((i for i, f in enumerate(msg.fields) if f.num > before), len(msg.fields))
+    msg.fields.insert(at, field)
+
+
 class Hero:
     def __init__(self, path):
         self.path = path
@@ -358,6 +386,7 @@ class Hero:
         """The hero list reads the digest; the game reads the saved Level and base stat attributes."""
         self.digest.set(5, d3save.zigzag(value))
         self.set_attribute(LEVEL_KEY, d3save.zigzag(value))
+        self.set_attribute(EXPERIENCE_NEXT_KEY, d3save.zigzag(LEVEL_XP[value - 1]))   # an empty bar at the new level
         if self.class_name in CLASS_MAIN_STAT:
             for stat, amount in base_stats(self.class_name, value).items():
                 bits, = struct.unpack('<i', struct.pack('<f', amount))
@@ -386,6 +415,69 @@ class Hero:
             data.set(2, 1)        # active hireling: Templar
         self.dirty = True
 
+    # --- progress
+    def _dz(self, num, default=0):
+        return d3save.unzigzag(self.digest.get(num, d3save.zigzag(default)))
+
+    flags = property(lambda s: s.digest.get(6, 0))
+    hardcore = property(lambda s: bool(s.flags & HARDCORE_FLAG))
+    dead = property(lambda s: bool(s.flags & DEAD_FLAG))
+    highest_difficulty = property(lambda s: s._dz(12))
+
+    @property
+    def last_played(self):
+        """(difficulty, act, quest sno, step uid) the game starts the hero at."""
+        q = self.digest.get(13, 0xFFFFFFFF)
+        return self._dz(11), self._dz(9), q - (1 << 32) if q >= 1 << 31 else q, self._dz(14, -1)
+
+    def unlock_progress(self, difficulty, quests):
+        """Unlocks every act and every difficulty up to `difficulty` (0 Normal .. 3 Inferno): all story quests count
+        as played to their end on those difficulties, so any quest and checkpoint can be picked when starting a game."""
+        d = self.digest
+        d.set(10, d3save.zigzag(3))                                        # highest unlocked act: Act IV
+        d.set(12, d3save.zigzag(max(difficulty, self.highest_difficulty)))
+        d.set(16, d3save.zigzag(max(difficulty - 1, self._dz(16, -1))))   # highest completed difficulty
+        had = {(e.get(1), d3save.unzigzag(e.get(2, 0))) for e in d.subs(8)}
+        for diff in range(difficulty + 1):
+            for act in quests:
+                for q in act:
+                    if (q['sno'], diff) in had:
+                        continue
+                    entry = d3save.Message([d3save.Field(1, d3save.FIXED32, q['sno'] & 0xFFFFFFFF),
+                                            d3save.Field(2, d3save.VARINT, d3save.zigzag(diff)),
+                                            d3save.Field(3, d3save.VARINT, d3save.zigzag(q['completed']))])
+                    if d.first(8):
+                        d.insert_message_after(8, entry)
+                    else:
+                        _insert_field(d, d3save.Field(8, d3save.BYTES, b'', entry), 8)
+        saved = self.msg.sub(4)
+        if saved is not None:
+            saved.set(2, 0xFFFFFFFF)   # activated waypoints
+        self.dirty = True
+
+    def start_at(self, difficulty, act, sno, step):
+        """Where the hero starts the next game: the quest and checkpoint shown under "Resume" when starting a game."""
+        d = self.digest
+        for num, value in ((9, act), (11, difficulty)):
+            d.set(num, d3save.zigzag(value))
+        d.set(13, sno & 0xFFFFFFFF, d3save.FIXED32)
+        d.set(14, d3save.zigzag(step))
+        # The quest in progress: replace the saved quest state with the chosen quest at the chosen step.
+        self.msg.remove(5)
+        quest = d3save.Message([d3save.Field(1, d3save.FIXED32, sno & 0xFFFFFFFF),
+                                d3save.Field(2, d3save.VARINT, d3save.zigzag(difficulty)),
+                                d3save.Field(3, d3save.VARINT, d3save.zigzag(step))])
+        _insert_field(self.msg, d3save.Field(5, d3save.BYTES, b'', quest), 5)
+        self.dirty = True
+
+    def revive(self):
+        """Brings a dead hardcore hero back: clears the dead flag and the name of what killed them."""
+        self.digest.set(6, self.flags & ~DEAD_FLAG)
+        console = self.msg.sub(10)
+        if console is not None:
+            console.remove(3)
+        self.dirty = True
+
     @property
     def container(self):
         if self.msg.sub(6) is None:
@@ -402,6 +494,9 @@ PARTITION_NAMES = {0: 'Normal', 1: 'Hardcore'}
 # still needed for the next Paragon level, which the game reads from this table (console values, levels 0..99).
 ALT_LEVEL_KEY, ALT_XP_NEXT_KEY = 0x1FF9, 0x1FFB
 MAX_PARAGON = 100
+STASH_SLOTS_KEY, STASH_TAB_SLOTS = 0x1FFF, 70
+ARTISANS = ['Blacksmith', 'Jeweler']   # the save keeps a third (Mystic) the console game has no use for
+MAX_ARTISAN = 10
 PARAGON_XP = [7200000 + 1440000 * n for n in range(59)] + [
     92160000, 95040000, 97920000, 100800000, 103680000, 106560000, 109440000, 112320000, 115200000, 118080000,
     120960000, 126000000, 131040000, 136080000, 141120000, 146160000, 151200000, 156240000, 161280000, 166320000,
@@ -477,6 +572,42 @@ class Account:
             self.msg.sub(2).set(6, level)
         self.dirty = True
 
+    # Shared_Stash_Slots (attribute 9): 70 per stash tab, at most 210 (the attribute's bounds in the game).
+    def get_stash_tabs(self, index=0):
+        entry, _ = self._attribute(index, STASH_SLOTS_KEY)
+        return max(1, -(-d3save.unzigzag(entry.get(2, 0)) // STASH_TAB_SLOTS)) if entry else 1
+
+    def set_stash_tabs(self, tabs, index=0):
+        tabs = max(1, min(tabs, 3))
+        entry, attrs = self._attribute(index, STASH_SLOTS_KEY)
+        if entry is None:
+            entry = d3save.Message([d3save.Field(1, d3save.VARINT, STASH_SLOTS_KEY), d3save.Field(2, d3save.VARINT, 0)])
+            attrs.add_message(2, entry)
+        entry.set(2, d3save.zigzag(tabs * STASH_TAB_SLOTS))
+        self.dirty = True
+
+    # Artisans: partition field 4 holds one CrafterData per artisan {1: learned recipes, 3: level, 4: cooldown}.
+    def crafters(self, index=0):
+        return self.partition(index).sub(4, create=True).subs(1)
+
+    def get_artisan(self, artisan, index=0):
+        c = self.crafters(index)
+        return c[artisan].get(3, 0) if artisan < len(c) else 0
+
+    def set_artisan(self, artisan, level, index=0):
+        data = self.partition(index).sub(4, create=True)
+        while len(data.subs(1)) <= artisan:
+            data.add_message(1, d3save.Message([d3save.Field(3, d3save.VARINT, 0), d3save.Field(4, d3save.VARINT, 0)]))
+        data.subs(1)[artisan].set(3, max(0, min(level, MAX_ARTISAN)))
+        self.dirty = True
+
+    hardcore_unlocked = property(lambda s: bool(s.msg.sub(2).get(4, 0) & 1))
+
+    def unlock_hardcore(self):
+        """Lets new hardcore heroes be created (normally after a hero reaches level 10)."""
+        self.msg.sub(2).set(4, self.msg.sub(2).get(4, 0) | 1)   # Account.Digest.flags HARDCORE_HERO_UNLOCKED
+        self.dirty = True
+
 
 GOLD_GBID = 0x07869277   # Gold1
 
@@ -486,6 +617,21 @@ class SaveFolder:
         self.path = path
         self.account = Account(os.path.join(path, 'account.dat'))
         self.heroes = [Hero(p) for p in sorted(glob.glob(os.path.join(path, 'heroes', '*.dat')))]
+
+    def clone_hero(self, hero, name):
+        """A copy of a hero under a new name and id (the file name is the id)."""
+        ids = {h.id_low for h in self.heroes}
+        low = random.getrandbits(63) | 1
+        while low in ids:
+            low = random.getrandbits(63) | 1
+        copy = Hero.__new__(Hero)
+        copy.path = os.path.join(self.path, 'heroes', '%016x.dat' % low)
+        copy.msg = d3save.Message.parse(hero.msg.encode())
+        copy.digest.sub(2).set(2, low)
+        copy.digest.set(3, name.encode('utf-8'), d3save.BYTES)
+        copy.dirty = True
+        self.heroes.append(copy)
+        return copy
 
     def backup(self):
         """Copies the whole save folder next to it before anything is written."""
@@ -513,6 +659,46 @@ class SaveFolder:
             os.replace(tmp, x.path)
             x.dirty = False
         return dest
+
+
+PRESET_FORMAT = 'd3-x360-rehydrated-item'
+
+
+def item_preset(item):
+    """An item as a preset (JSON-able): the saved item record and the gems in its sockets."""
+    import base64
+    return {'format': PRESET_FORMAT, 'version': 1, 'item': base64.b64encode(item.msg.encode()).decode(),
+            'gems': [g.gbid for g in item.gems]}
+
+
+def place_item(msg, gems, container, slot, square, hireling=0):
+    """Adds a copy of a saved item record to a container with a new id, at the given place, with its own gems."""
+    item = it.Item(d3save.Message.parse(msg.encode()))
+    item.msg.sub(1).set(2, container.next_id())
+    item.gen.remove(13)                  # the gems get new ids below
+    item.msg.remove(3)                   # no longer socketed in anything
+    if item.msg.first(7) is not None:
+        item.msg.set(7, 0)
+    item.slot, item.square, item.hireling = slot, square, hireling
+    container.add(item)
+    if gems:
+        container.set_gems(item, gems)
+    return item
+
+
+def preset_record(preset):
+    """The item record and gems of a preset; raises ValueError for anything else."""
+    import base64
+    if not isinstance(preset, dict) or preset.get('format') != PRESET_FORMAT:
+        raise ValueError('not an item preset of this editor')
+    msg = d3save.Message.parse(base64.b64decode(preset['item']))
+    if it.Item(msg).gbid is None:
+        raise ValueError('the preset holds no item')
+    return msg, [int(g) for g in preset.get('gems', [])]
+
+
+def grid_of(slot):
+    return (BACKPACK_W, BACKPACK_H) if slot == it.BACKPACK else (STASH_W, STASH_H)
 
 
 def make_item(container, data, info, slot, square, quality=None, affixes=(), stack=None):
