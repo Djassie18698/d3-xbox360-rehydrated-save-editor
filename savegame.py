@@ -150,6 +150,8 @@ class GameData:
         with open(os.path.join(DATA, 'affixes.json'), encoding='utf-8') as f:
             self.affixes = json.load(f)
         self.by_gbid = {i['gbid']: i for i in self.items}
+        # Legendaries and set items as the console saves them ("<name>_1xx"; see tools/console_ids.py).
+        self.by_gbid.update({i['consoleGbid']: i for i in self.items if 'consoleGbid' in i})
         self.affix_by_gbid = {a['gbid']: a for a in self.affixes}
         try:
             with open(os.path.join(DATA, 'text.json'), encoding='utf-8') as f:
@@ -258,6 +260,126 @@ class GameData:
     def height(self, gbid):
         info = self.by_gbid.get(gbid)
         return 1 if not info or info['type'] in SMALL_TYPES else 2
+
+    def stat_scale(self, stat):
+        """How a stat is shown: the shown number for a raw value of 1 (100 for percentages)."""
+        m = re.search(r'\d+(?:\.\d+)?', describe_stat([stat[0], stat[1], 1, 1], self.stat_text))
+        return float(m.group()) if m else 1.0
+
+    def stat_total(self, affixes, stat):
+        """Lowest and highest raw total of one stat (attribute, parameter) over these affixes."""
+        rolls = [(st[2] or 0, st[3] or 0) for g in affixes for st in self.affix_by_gbid.get(g, {}).get('stats', [])
+                 if st[:2] == list(stat[:2])]
+        return sum(r[0] for r in rolls), sum(r[1] for r in rolls)
+
+    def set_stat_total(self, affixes, stat, target, room):
+        """Affixes that give at least `target` (raw) of a stat: the affixes that only give this stat are replaced by
+        ones that get there with the least overshoot (copies stack). Returns the
+        new list and how many affixes now give the stat; the total is the target up to their highest rolls."""
+        key = list(stat[:2])
+
+        def only_this(g):
+            stats = self.affix_by_gbid.get(g, {}).get('stats', [])
+            return bool(stats) and all(st[:2] == key for st in stats)
+        kept = [g for g in affixes if not only_this(g)]
+        rest = target - self.stat_total(kept, stat)[0]
+        if rest <= 0:
+            return kept, 0
+        pool = [(a['stats'][0][2], a['stats'][0][3], a['gbid']) for a in self.affixes
+                if len(a['stats']) == 1 and a['stats'][0][:2] == key and (a['stats'][0][2] or 0) > 0]
+        if not pool:
+            raise ValueError('no affix gives only this stat')
+        # Copies of the affix with the biggest lowest roll, topped up with the one affix that closes the gap with the
+        # lowest highest roll: the total lands as close above the target as these tables allow.
+        big = max(pool, key=lambda p: (p[0], -p[1]))
+        best = None
+        for k in range(int(rest // big[0]) + 2):
+            gap = rest - k * big[0]
+            top = None if gap <= 1e-9 else min((p for p in pool if p[0] >= gap - 1e-9), key=lambda p: p[1], default=None)
+            if gap > 1e-9 and top is None:
+                continue
+            choice = [big[2]] * k + ([top[2]] if top else [])
+            high = k * big[1] + (top[1] if top else 0)
+            if choice and len(kept) + len(choice) <= room and (best is None or (high, len(choice)) < best[0]):
+                best = ((high, len(choice)), choice)
+        if best is None:
+            need = int(-(-(rest - 1e-6) // big[0]))
+            raise ValueError('that takes %d affixes and an item holds %d' % (len(kept) + need, room))
+        return kept + best[1], len(best[1])
+
+    def requirement(self, info, affixes):
+        """(required level of the item type, lowest and highest total reduction its affixes can roll)."""
+        stats = [st for g in affixes for st in self.affix_by_gbid.get(g, {}).get('stats', [])
+                 if st[0] == 'Item_Level_Requirement_Reduction']
+        return info.get('requiredLevel', 0), int(sum(st[2] for st in stats)), int(sum(st[3] for st in stats))
+
+
+# Affix rolls. The game's random generator is a multiply-with-carry: state (a, b) starts as (seed, 666) and each
+# draw sets a, b to the low and high word of a * 1791398085 + b and returns a. An item first rolls its base stats
+# from (generator seed, 666), then starts over from (a after those draws, 666) and evaluates its affixes in stored
+# order; a range in a formula costs one draw: low + draw / 2^32 * (high - low). How many draws the base stats take
+# depends on the item type, so a seed is only used if it rolls well for every count up to REQ_BASE_DRAWS (and up to
+# REQ_SKIP_DRAWS more before the affixes start).
+RNG_MUL = 1791398085
+REQ_AFFIX = 98314656     # "REQ 8": level requirement reduced by 2-30
+REQ_BASE_DRAWS = 24
+REQ_SKIP_DRAWS = 6
+
+
+def _draws(a, n):
+    b, out = 666, []
+    for _ in range(n):
+        t = a * RNG_MUL + b
+        a, b = t & 0xFFFFFFFF, t >> 32
+        out.append(a)
+    return out
+
+
+def _totals(seed, copies, low, high):
+    """What `copies` affixes of low-high placed first add up to, for every base draw count and skip."""
+    for a in [seed] + _draws(seed, REQ_BASE_DRAWS):
+        draws = _draws(a, REQ_SKIP_DRAWS + copies)
+        for skip in range(REQ_SKIP_DRAWS + 1):
+            # Rounded down, so the total is never lower than this whichever way the game rounds.
+            yield sum(int(low + d / 2 ** 32 * (high - low)) for d in draws[skip:skip + copies])
+
+
+def _rolls_enough(seed, copies, low, high, need):
+    return all(t >= need for t in _totals(seed, copies, low, high))
+
+
+def eased_level(data, info, affixes, seed):
+    """The highest level requirement the item can end up with: leading copies of REQ_AFFIX counted with the rolls
+    of this seed, other reduction affixes with their lowest roll."""
+    base, low, _ = data.requirement(info, affixes)
+    copies = next((n for n, g in enumerate(affixes) if g != REQ_AFFIX), len(affixes))
+    if copies:
+        _, req_low, req_high = data.requirement(info, [REQ_AFFIX])
+        low += min(_totals(seed, copies, req_low, req_high)) - copies * req_low
+    return max(base - low, 1)
+
+
+def ease_requirement(data, info, affixes, target, room, tries=20000):
+    """Affixes and a seed that bring the item's level requirement down to `target` or lower: copies of the largest
+    reduction affix put first (copies stack), with a seed whose rolls add up to enough. Returns (affixes, seed or
+    None, copies); without a seed the copies are enough even if every copy rolls its lowest."""
+    rest = [g for g in affixes if g not in {a['gbid'] for a in data.affixes
+                                              if any(st[0] == 'Item_Level_Requirement_Reduction' for st in a['stats'])}]
+    need = info.get('requiredLevel', 0) - max(target, 0)
+    if need <= 0:
+        return rest, None, 0
+    _, low, high = data.requirement(info, [REQ_AFFIX])
+    room = room - len(rest)
+    for copies in range(max(1, -(-need // high)), room + 1):
+        if copies * low >= need:
+            return [REQ_AFFIX] * copies + rest, None, copies
+        if copies * (low + high) / 2 < need:      # the average roll falls short; seeds that work are too rare
+            continue
+        for _ in range(tries):
+            seed = random.getrandbits(32)
+            if _rolls_enough(seed, copies, low, high, need):
+                return [REQ_AFFIX] * copies + rest, seed, copies
+    raise ValueError('not enough room for the affixes that bring the level requirement down to %d' % target)
 
 
 class Container:
@@ -647,6 +769,19 @@ class SaveFolder:
         shutil.copytree(self.path, dest)
         return dest
 
+    def pc_id_items(self, data):
+        """(owner, item) for items saved with the PC id of a legendary or set item the console has its own row for
+        (older editor versions wrote those; the game can turn them into another item)."""
+        owners = [(self.account, self.account.stash(p)) for p in self.account.partitions]
+        owners += [(h, h.container) for h in self.heroes]
+        return [(owner, i) for owner, c in owners for i in c.items
+                if 'consoleGbid' in data.by_gbid.get(i.gbid, {}) and i.gbid == data.by_gbid[i.gbid]['gbid']]
+
+    def use_console_ids(self, data):
+        for owner, item in self.pc_id_items(data):
+            item.gbid = data.by_gbid[item.gbid]['consoleGbid']
+            owner.dirty = True
+
     def save(self):
         if game_running():
             raise RuntimeError('Close the game first: it overwrites the saves while it runs.')
@@ -717,7 +852,7 @@ def make_item(container, data, info, slot, square, quality=None, affixes=(), sta
     if quality in (3, 4, 5, 6, 7, 8) and not affixes:
         # Magic items roll 1-2 affixes and rares 4-6: without any the game shows a blue or yellow item with no stats.
         affixes = data.random_affixes(info, {3: 1, 4: 2, 5: 2, 6: 4, 7: 5, 8: 6}[quality])
-    item = it.new_item(container.next_id(), info['gbid'], slot, square, stack=stack,
+    item = it.new_item(container.next_id(), info.get('consoleGbid', info['gbid']), slot, square, stack=stack,
                        durability=info['maxDurability'] if info['maxDurability'] > 0 and not stackable else 0,
                        quality=quality, seed=random.getrandbits(32), affixes=affixes)
     if quality in (6, 7, 8):

@@ -35,9 +35,19 @@ OneDrive). If you start Rehydrated with another `--user_data_root`, use **Open f
   one per family. Tick **Show all affixes (modded)** to add any affix to any item, as many copies as you like:
   copies stack, so a dagger with four times the top damage affix really does four times that damage.
   An item can hold at most **32 affixes**; with more the game disconnects you when the item loads.
+- **Set a stat**: double-click an affix and type the total you want, e.g. 1000% Critical Hit damage. The editor
+  replaces the affixes that only give that stat with copies of the console's affixes for it, as close above the
+  total as their rolls allow (1000% becomes 1010-1360%: each copy still rolls in its own range).
 - **Sockets and gems**: give any item up to **3 sockets**, also items that normally get fewer (a dagger with three
   Radiant Star Rubies works in game), and fill them with any gem, up to the console's Radiant Star gems. More than 3
   is not possible: the game client only handles 0-3 sockets and disconnects with more gems.
+- **Level requirement**: wear an item from a lower level, down to level 1 (a level 60 weapon on a level 1 hero). The
+  editor puts copies of the console's "Level requirement reduced by 2-30" affix in front of the item's affixes (6 for a
+  level 60 item) and picks a seed that rolls them high enough; that seed also rerolls the item's other stats.
+  Set the level back to the normal one to take them off again.
+- **Set items** show in green in the editor with the name of their set. In the PC 1.0.8 client a set item's square
+  in the inventory is the same orange as a legendary's (that client has no green set background); the tooltip names it
+  a Set item in green.
 - **Rare names**: rares get a name like the game gives them ("Worthy Shell"), built from the item type and its
   affixes; pick another from the list of names that item can have.
 - **Followers**: unlock the Templar, Scoundrel and Enchantress for a hero and equip their main hand, off-hand,
@@ -74,7 +84,8 @@ exit with a fatal error on entering Act II-IV (open the hero and pick the quest 
 Hell and Inferno through the PC proxy need a Rehydrated.Bnet that offers a game factory per difficulty. Bulk add, copies and
 presets are checked with the editor's own test on a save copy.
 
-Not supported: typing exact stat numbers (stats come from the game's affix tables; stack affixes instead) and a
+Not supported: exact stat numbers (the save only names affixes and a seed; the game rolls the numbers from its own
+tables, so Set a stat gives a range) and a
 bigger backpack (the game window only shows 60 squares). Rare names are written the way the game stores them, but the
 in-game tooltip showing them has not been checked.
 
@@ -93,6 +104,13 @@ in-game tooltip showing them has not been checked.
   sfixed32), the rare name (word list SNO and indexes), durability, stack size, quality (sint32; 3-5 magic, 6-8 rare,
   9 legendary) and socketed gems. A gem is also saved as its own item in slot 47 pointing at the socketed item.
   Follower gear has the hireling class (1 Templar, 2 Scoundrel, 3 Enchantress) and slots 64-69.
+- Console legendaries and set items are rows named `<PC name>_1xx` (Thunderfury is `Unique_Sword_1H_014_1xx`), so
+  their gbids differ from the PC ones; Rehydrated's PC proxy maps them back for the PC client. The console still has
+  some old rows under the PC ids, and an item saved with one can come out as another item, so the editor writes the
+  console id (`consoleGbid` in `data/items.json`) and offers to switch items saved by older versions. In PC proxy
+  mode the proxy also has to translate what a hero wears (`SMSG_VISUAL_INVENTORY`) and the hero list's visual
+  equipment; a proxy that passes those through unchanged sends the PC client item ids it doesn't know, and it can
+  crash when such a hero joins a game. That holds for legendaries the game drops too, not only edited ones.
 - Console affixes are named `1xx_<name>` and their gbid is the hash of that full name, so PC affix ids do not work
   on console. `data/affixes.json` is the console's own affix table (3227 affixes).
 - The hero level is the digest (hero list) plus the saved `Level` attribute (key `0x1F5F`) the game reads in play.
@@ -110,6 +128,14 @@ in-game tooltip showing them has not been checked.
 - Console legendaries were reworked: each lists up to 6 affix families (item record offset 1224) with a highest affix
   level (1248) and rolls one affix from each when it drops. Legendary-only affixes name the group `0xA14D315D` and rule
   item types out through their exclusion list.
+- Affix rolls (the same in the PC client's code and the console's): the random generator is a multiply-with-carry,
+  state `(a, b)` starting at `(seed, 666)`, each draw `a * 1791398085 + b` split into the new low (`a`) and high (`b`)
+  word. An item rolls its base stats from the generator seed, starts over from `(a, 666)` and evaluates its affixes
+  in stored order; a random range costs one draw (`low + draw / 2^32 * (high - low)`). The base stats take a number
+  of draws that depends on the item type, so the level requirement seed is chosen to roll enough for every count up
+  to 24 (and up to 6 more draws before the affixes).
+- Set items name their set at offset 320 of the PC item record; the client shows a legendary as Set when its record
+  has one.
 - Affix stats are the console's own formulas (small stack programs: push numbers, random range, divide), turned into
   text with the PC client's attribute descriptions.
 
@@ -122,6 +148,8 @@ in-game tooltip showing them has not been checked.
   exist on console):
   start Rehydrated, wait for the main menu, then `python tools\console_affixes.py`; it reads them from the running game.
   Run it after `gen_gamedata.py`.
+- The console ids of legendaries and set items:
+  `python tools\console_ids.py <Rehydrated folder>\src\recomp\network\gbid_mappings.h`.
 - `tools\ingame_test.py` prepares a copy of a save folder with test items (`basic`, `affix`, `crazy`, `legend`,
   `extras`, `progress`) to check in game; `tools\ui_test.py` and `tools\ui_test2.py` run the editor's own actions on a
   copy without showing the window.

@@ -91,6 +91,8 @@ def main(client, out):
     core, text = MPQ(mpqs / 'CoreData.mpq'), MPQ(mpqs / 'enGB_Text.mpq')
     item_names = string_list(text, 'StringList/Items.stl')
     type_names = string_list(text, 'StringList/ItemTypeNames.stl')
+    # Set items name their set (a SetItemBonuses record) at 320; the client shows those legendaries as "Set" in green.
+    set_names = {gbid(k): v for k, v in string_list(text, 'StringList/ItemSets.stl').items() if k != 'SetPrefix'}
 
     types = {}
     for name, rec in records(core.read('GameBalance/ItemTypes.gam'), ITEMTYPE_RECORD):
@@ -114,6 +116,7 @@ def main(client, out):
             sno_actor, type_gbid = struct.unpack_from('<iI', rec, 256)
             level, = struct.unpack_from('<i', rec, 272)
             req_level, max_dur = struct.unpack_from('<ii', rec, 304)
+            set_gbid, = struct.unpack_from('<I', rec, 320)
             itype = types.get(type_gbid, {'name': '?', 'display': '?'})
             items.append({
                 'gbid': gbid(name), 'name': name, 'display': item_names.get(name, name), 'table': table,
@@ -122,6 +125,8 @@ def main(client, out):
                 'legendary': table.startswith('Items_Legendary') or name.startswith(('Unique_', 'Set_')),
                 'affixRolls': [],   # filled in from the console's own tables by console_affixes.py
             })
+            if set_gbid in set_names:
+                items[-1]['set'] = set_names[set_gbid]
 
     for extra in CONSOLE_ITEMS:
         items.append(dict(extra, gbid=gbid(extra['name'])))

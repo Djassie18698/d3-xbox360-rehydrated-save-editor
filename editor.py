@@ -152,9 +152,10 @@ class AddItemDialog(tk.Toplevel):
             if q and q not in info['display'].lower() and q not in info['name'].lower():
                 continue
             iid = self.tree.insert('', 'end', values=(info['display'], info['typeDisplay'], info['level'], info['name']),
-                                   tags=('legendary',) if info['legendary'] else ())
+                                   tags=('set',) if info.get('set') else ('legendary',) if info['legendary'] else ())
             self.shown[iid] = info
         self.tree.tag_configure('legendary', foreground='#b35c00')
+        self.tree.tag_configure('set', foreground='#1f8a1f')
 
     def ok(self):
         sel = self.tree.selection()
@@ -222,6 +223,56 @@ class AffixDialog(tk.Toplevel):
             copies = max(1, self.copies.get()) if self.everything.get() else 1
             self.result = [self.shown[sel[0]]['gbid']] * copies
             self.destroy()
+
+
+class StatDialog(tk.Toplevel):
+    """Type the total a stat should have; the editor stacks affixes to get there."""
+
+    def __init__(self, app, affixes, stats):
+        super().__init__(app.root)
+        self.app, self.affixes, self.result = app, affixes, None
+        self.stats = {sg.describe_stat(st, app.data.stat_text): st for st in stats}
+        self.title('Set stat')
+        self.transient(app.root)
+        f = ttk.Frame(self, padding=10)
+        f.pack(fill='both', expand=True)
+        self.stat = tk.StringVar(value=next(iter(self.stats)))
+        ttk.Label(f, text='Stat').grid(row=0, column=0, sticky='w')
+        ttk.Combobox(f, textvariable=self.stat, values=list(self.stats), state='readonly', width=50).grid(row=0, column=1, sticky='w', padx=6)
+        self.now = ttk.Label(f, text='')
+        self.now.grid(row=1, column=1, sticky='w', padx=6, pady=4)
+        ttk.Label(f, text='Total').grid(row=2, column=0, sticky='w')
+        self.value = tk.StringVar()
+        e = ttk.Entry(f, textvariable=self.value, width=12)
+        e.grid(row=2, column=1, sticky='w', padx=6)
+        e.focus_set()
+        e.bind('<Return>', lambda _: self.ok())
+        ttk.Label(f, text='The game rolls every number from its own affix tables, so the editor stacks copies of the\n'
+                  'affix for this stat until the total is at least this much (the copies\' rolls can add a bit more).\n'
+                  '0 takes the stat off. At most %d affixes per item.' % MAX_AFFIXES,
+                  foreground='#777').grid(row=3, column=0, columnspan=2, sticky='w', pady=6)
+        ttk.Button(f, text='Set', command=self.ok).grid(row=4, column=1, sticky='e')
+        self.stat.trace_add('write', lambda *_: self.show())
+        self.show()
+        self.grab_set()
+
+    def show(self):
+        st = self.stats[self.stat.get()]
+        scale = self.app.data.stat_scale(st)
+        low, high = self.app.data.stat_total(self.affixes, st)
+        self.now.config(text='Now %s' % (sg._number(low * scale) if low == high else
+                                         '%s-%s' % (sg._number(low * scale), sg._number(high * scale))), foreground='#777')
+        if not self.value.get():
+            self.value.set(sg._number(low * scale))
+
+    def ok(self):
+        try:
+            value = float(self.value.get().replace(',', '.').rstrip('%'))
+        except ValueError:
+            return
+        st = self.stats[self.stat.get()]
+        self.result = (st, value / self.app.data.stat_scale(st))
+        self.destroy()
 
 
 class ProgressDialog(tk.Toplevel):
@@ -452,6 +503,7 @@ class App:
             self.tree.column(c, width=w, anchor='w')
         self.tree.pack(fill='both', expand=True)
         self.tree.tag_configure('legendary', foreground='#b35c00')
+        self.tree.tag_configure('set', foreground='#1f8a1f')
         self.tree.tag_configure('rare', foreground='#9a7d00')
         self.tree.tag_configure('magic', foreground='#2a5bd7')
         self.tree.bind('<<TreeviewSelect>>', lambda e: self.show_item())
@@ -482,6 +534,7 @@ class App:
         ttk.Label(right, text='Affixes').pack(anchor='w')
         self.affix_list = tk.Listbox(right, height=8)
         self.affix_list.pack(fill='both', expand=True)
+        self.affix_list.bind('<Double-1>', lambda e: self.edit_stat())
         ab = ttk.Frame(right)
         ab.pack(fill='x', pady=4)
         ttk.Button(ab, text='Add affix...', command=self.add_affix).pack(side='left')
@@ -512,6 +565,15 @@ class App:
         gb.pack(fill='x', pady=4)
         ttk.Button(gb, text='Add gem...', command=self.add_gem).pack(side='left')
         ttk.Button(gb, text='Remove gem', command=self.remove_gem).pack(side='left', padx=6)
+
+        rf = ttk.Frame(right)
+        rf.pack(fill='x', pady=(6, 0))
+        self.req_label = ttk.Label(rf, text='Level requirement')
+        self.req_label.pack(side='left')
+        ttk.Button(rf, text='Set', command=self.set_requirement, width=5).pack(side='right')
+        self.req_var = tk.IntVar(value=1)
+        ttk.Spinbox(rf, from_=1, to=sg.MAX_LEVEL, textvariable=self.req_var, width=4).pack(side='right', padx=4)
+        ttk.Label(rf, text='Wear from level').pack(side='right')
 
         ttk.Label(right, text='Magic items hold 1-2 affixes, rares 4-6. Any item can have up to 3 sockets. '
                   'Press Apply changes to keep your edits.', wraplength=320, foreground='#777').pack(anchor='w', pady=4)
@@ -546,8 +608,15 @@ class App:
         sg.store_settings(saves=path)
         self.save = sg.SaveFolder(path)
         self.path_label.config(text=path)
+        old = self.save.pc_id_items(self.data)
+        if old and messagebox.askyesno('Legendary items', '%d legendary or set items in these saves use the PC version\'s '
+                                       'item id (written by an older version of this editor). The console has its own '
+                                       'version of them, and with the PC id the game can show another item.\n\n'
+                                       'Switch them to the console version? (Save afterwards to keep it.)' % len(old)):
+            self.save.use_console_ids(self.data)
         self.fill_owners(select=len(self.save.account.partitions) if self.save.heroes else 0)
-        self.set_status('Loaded %d heroes.' % len(self.save.heroes))
+        self.set_status('Loaded %d heroes.' % len(self.save.heroes) +
+                        (' %d legendaries switched to the console version (not saved yet).' % len(old) if old and self.unsaved() else ''))
 
     def fill_owners(self, select):
         self.owners.delete(0, 'end')
@@ -725,7 +794,8 @@ class App:
             gems = item.gems
             if gems:
                 stats.append('gems: ' + ', '.join(self.data.item_name(g.gbid) for g in gems))
-            tag = 'legendary' if item.quality == 9 or info.get('legendary') else 'rare' if 6 <= item.quality <= 8 else \
+            tag = 'set' if item.quality == 9 and info.get('set') else \
+                'legendary' if item.quality == 9 or info.get('legendary') else 'rare' if 6 <= item.quality <= 8 else \
                 'magic' if 3 <= item.quality <= 5 else ''
             iid = self.tree.insert('', 'end', values=(where_label(item), name, info.get('typeDisplay', '?'),
                                                       quality_label(item.quality), '; '.join(stats)), tags=(tag,) if tag else ())
@@ -745,13 +815,16 @@ class App:
             self.item_title.config(text='')
             return
         info = self.data.by_gbid.get(item.gbid, {})
-        self.item_title.config(text='%s\n%s, item level %s' % (self.data.item_name(item.gbid), info.get('typeDisplay', '?'), info.get('level', '?')))
+        self.item_title.config(text='%s\n%s, item level %s%s' % (
+            self.data.item_name(item.gbid), info.get('typeDisplay', '?'), info.get('level', '?'),
+            '\nSet: %s (when Legendary)' % info['set'] if info.get('set') else ''))
         self.q_var.set(quality_label(item.quality))
         self.stack_var.set(item.stack)
         self.dur_var.set(item.durability)
         self.pending_affixes = list(item.affixes)
         self.pending_name = item.rare_name
         self.pending_gems = [g.gbid for g in item.gems]
+        self.pending_seed = None
         self.refresh_pending()
 
     def refresh_pending(self):
@@ -767,6 +840,15 @@ class App:
         sockets = self.data.sockets(self.pending_affixes)
         self.sockets_var.set(sockets)
         self.gem_label.config(text='Gems (%d of %d sockets)' % (len(self.pending_gems), sockets))
+        base, low, high = self.data.requirement(info, self.pending_affixes)
+        if item and high:
+            seed = item.seed if self.pending_seed is None else self.pending_seed
+            worst = sg.eased_level(self.data, info, self.pending_affixes, seed)
+            best = max(base - high, 1)
+            self.req_label.config(text='Level %d (normally %d)' % (worst, base) if worst == best else
+                                  'Level %d-%d (normally %d)' % (best, worst, base))
+        else:
+            self.req_label.config(text='Level requirement %d' % base)
 
     # --- edits
     def mark(self):
@@ -787,6 +869,9 @@ class App:
                                 'gems; use the Sockets setting instead of more Sockets affixes.' % MAX_SOCKETS)
             return
         item.affixes = self.pending_affixes[:MAX_AFFIXES]
+        if self.pending_seed is not None:
+            item.seed = self.pending_seed
+            self.pending_seed = None
         if 6 <= item.quality <= 8 and not self.pending_name:
             self.pending_name = self.data.random_rare_name(info, item.affixes)
         item.rare_name = self.pending_name if 6 <= item.quality <= 8 else None
@@ -812,6 +897,33 @@ class App:
                 messagebox.showinfo('Affixes', 'An item can hold %d affixes; %d added.' % (MAX_AFFIXES, max(room, 0)))
             self.pending_affixes += d.result[:max(room, 0)]
             self.refresh_pending()
+
+    def edit_stat(self):
+        sel = self.affix_list.curselection()
+        if not sel or not self.selected():
+            return
+        stats = [st for st in self.data.affix_by_gbid.get(self.pending_affixes[sel[0]], {}).get('stats', [])
+                 if st[2] is not None and st[0] not in ('Sockets', 'Item_Level_Requirement_Reduction')]
+        if not stats:
+            messagebox.showinfo('Set stat', 'This affix has no number to change (sockets and the level requirement '
+                                'have their own settings).')
+            return
+        d = StatDialog(self, self.pending_affixes, stats)
+        self.root.wait_window(d)
+        if not d.result:
+            return
+        st, target = d.result
+        try:
+            self.pending_affixes, copies = self.data.set_stat_total(self.pending_affixes, st, target, MAX_AFFIXES)
+        except ValueError as e:
+            messagebox.showinfo('Set stat', str(e).capitalize() + '.')
+            return
+        self.refresh_pending()
+        scale = self.data.stat_scale(st)
+        low, high = self.data.stat_total(self.pending_affixes, st)
+        self.set_status('Stat total now %s-%s from %d affix%s. Press Apply changes to keep it.' % (
+            sg._number(low * scale), sg._number(high * scale), copies, 'es' if copies > 1 else '')
+            if copies else 'Stat taken off. Press Apply changes to keep it.')
 
     def remove_affix(self):
         sel = self.affix_list.curselection()
@@ -894,6 +1006,28 @@ class App:
         self.pending_affixes += [self.socket_affix(self.data.by_gbid.get(item.gbid, {}))] * n
         self.pending_gems = self.pending_gems[:n]
         self.refresh_pending()
+
+    def set_requirement(self):
+        """Lower the level requirement with stacked "level requirement reduced" affixes and a seed that rolls them
+        high enough; this also rerolls the item's other stats."""
+        item = self.selected()
+        if not item:
+            return
+        try:
+            target = max(1, min(int(self.req_var.get()), sg.MAX_LEVEL))
+        except (ValueError, tk.TclError):
+            return
+        info = self.data.by_gbid.get(item.gbid, {})
+        try:
+            self.pending_affixes, seed, copies = sg.ease_requirement(self.data, info, self.pending_affixes, target, MAX_AFFIXES)
+        except ValueError as e:
+            messagebox.showinfo('Level requirement', str(e).capitalize() + '. Remove some affixes and try again.')
+            return
+        if seed is not None:
+            self.pending_seed = seed
+        self.refresh_pending()
+        self.set_status('Level requirement: %d "level requirement reduced" affixes. Press Apply changes to keep it.' % copies
+                        if copies else 'Level requirement back to normal. Press Apply changes to keep it.')
 
     def remove_gem(self):
         sel = self.gem_list.curselection()
